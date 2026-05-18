@@ -13,7 +13,7 @@ sys.path.append(PROJECT_ROOT)
 from global_project_paths import SIMDATA_PATH
 
 from src.dynamics.process_models import GroundTruthModel, Model_GP_CV, Model_PCA_CV, Model_PCA_Temporal, Model_PCA_Inflation
-from src.dynamics.trajectories import CircleTrajectory, WaypointTrajectory, ConstantVelocityTrajectory
+from src.dynamics.trajectories import CircleTrajectory, WaypointTrajectory, ConstantVelocityTrajectory, DynamicWaypointTrajectory
 from src.sensors.LidarModel import LidarSimulator
 
 from tracker.EKF import EKF
@@ -131,6 +131,10 @@ def run_single_simulation(config: Config) -> SimulationResult:
         trajectory_strategy = WaypointTrajectory(
             waypoints=traj_cfg.waypoints, target_speed=traj_cfg.speed
         )
+    elif traj_cfg.type == "complex_maneuvers":
+        trajectory_strategy = DynamicWaypointTrajectory(
+            waypoints=traj_cfg.waypoints, initial_speed=traj_cfg.speed
+        )
     else:
         raise ValueError(f"Unknown trajectory type: {traj_cfg.type}")
 
@@ -246,11 +250,22 @@ def run_single_simulation(config: Config) -> SimulationResult:
             nees_data = consistency_analyzer.get_nees(indices='all')
             avg_nees = nees_data.a if nees_data else None
             
+            nis_data = consistency_analyzer.get_nis(indices='all')
+            avg_nis = nis_data.a if nis_data else None
+
+            nees_in_interval = nees_data.in_interval * 100 if nees_data else None
+            nis_in_interval = nis_data.in_interval * 100 if nis_data else None
+            
             if hasattr(consistency_analyzer, 'x_err_gauss') and consistency_analyzer.x_err_gauss is not None:
                 err_arrays =[e.mean for e in consistency_analyzer.x_err_gauss.values]
-                rmse = np.sqrt(np.mean(np.square(err_arrays)))
+                full_state_rmse = np.sqrt(np.mean(np.square(err_arrays)))
+                
+                # Calculate 2D Positional RMSE (assuming indices 0 and 1 are North and East)
+                pos_errs = np.array([e.mean[:2] for e in consistency_analyzer.x_err_gauss.values])
+                rmse_pos = np.sqrt(np.mean(np.sum(pos_errs**2, axis=1)))
             else:
-                rmse = None
+                full_state_rmse = None
+                rmse_pos = None
 
             ious =[]
             for i, res in enumerate(results_sequence.values):
@@ -269,7 +284,7 @@ def run_single_simulation(config: Config) -> SimulationResult:
 
         except Exception as e:
             print(f"Error calculating metrics for JSON sidecar: {e}")
-            avg_nees, rmse, avg_iou, final_iou = None, None, None, None
+            avg_nees, full_state_rmse, rmse_pos, avg_iou, final_iou = None, None, None, None, None
 
         # Summary JSON
         summary_data = {
@@ -285,9 +300,13 @@ def run_single_simulation(config: Config) -> SimulationResult:
             "use_negative_info_centroid": getattr(tracker_cfg, 'use_negative_info_centroid', False),
             "use_initialize_centroid": getattr(tracker_cfg, 'use_initialize_centroid', False),
             "avg_nees": float(avg_nees) if avg_nees is not None else None,
-            "rmse": float(rmse) if rmse is not None else None,
+            "avg_nis": float(avg_nis) if avg_nis is not None else None,
+            "full_state_rmse": float(full_state_rmse) if full_state_rmse is not None else None,
+            "rmse_pos": float(rmse_pos) if rmse_pos is not None else None,
             "avg_iou": float(avg_iou) if avg_iou is not None else None,
-            "final_iou": float(final_iou) if final_iou is not None else None
+            "final_iou": float(final_iou) if final_iou is not None else None,
+            "nees_in_interval_95": float(nees_in_interval) if nees_in_interval is not None else None,
+            "nis_in_interval_95": float(nis_in_interval) if nis_in_interval is not None else None,
         }
         
         json_filename = os.path.join(sim_dir, f"{run_name}.json")

@@ -87,3 +87,46 @@ class WaypointTrajectory(TrajectoryStrategy):
         target_yaw_rate = 1.5 * heading_error
         
         return self.target_speed, target_yaw_rate
+
+class DynamicWaypointTrajectory(TrajectoryStrategy):
+    """
+    Follows a list of (x, y, speed) waypoints using Line-of-Sight.
+    Accelerates/decelerates to reach the target speed for each segment.
+    """
+    def __init__(self, waypoints: List[Tuple[float, float, float]], initial_speed: float, acceptance_radius: float = 5.0):
+        self.waypoints = waypoints
+        self.current_speed = initial_speed
+        self.acceptance_radius = acceptance_radius
+        self.current_idx = 0
+        self.loop = True
+        self.max_accel = 1.0  # Max acceleration/deceleration rate
+
+    def compute_velocity_commands(self, current_state, dt: float) -> Tuple[float, float]:
+        if self.current_idx >= len(self.waypoints):
+            return 0.0, 0.0
+
+        target_x, target_y, target_speed = self.waypoints[self.current_idx]
+        target = np.array([target_x, target_y])
+        pos = np.array([current_state.x, current_state.y])
+        dist = np.linalg.norm(target - pos)
+
+        # Check if reached
+        if dist < self.acceptance_radius:
+            self.current_idx += 1
+            if self.loop and self.current_idx >= len(self.waypoints):
+                self.current_idx = 0
+            return self.compute_velocity_commands(current_state, dt)
+
+        # LOS Guidance for sharp turns
+        desired_heading = np.arctan2(target[1] - pos[1], target[0] - pos[0])
+        heading_error = ssa(desired_heading - current_state.yaw)
+        
+        # Aggressive P-Controller for tight maneuvers
+        target_yaw_rate = 2.0 * heading_error 
+
+        # Speed limit control (acceleration/deceleration)
+        speed_diff = target_speed - self.current_speed
+        accel = np.clip(speed_diff / dt, -self.max_accel, self.max_accel)
+        self.current_speed += accel * dt
+
+        return self.current_speed, target_yaw_rate

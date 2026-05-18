@@ -52,9 +52,14 @@ def generate_timelapse_for_file(filename: Path, mode: str = 'both', num_snapshot
     all_y.append(lidar_pos[1])
 
     for idx in indices:
-        s = ground_truth_states[idx]
-        all_x.append(s.x)
-        all_y.append(s.y)
+        if idx < len(ground_truth_states):
+            s = ground_truth_states[idx]
+            all_x.append(s.x)
+            all_y.append(s.y)
+        else:
+            s_est = tracker_results[idx].state_posterior.mean
+            all_x.append(s_est.x)
+            all_y.append(s_est.y)
     
     padding = 20
     min_x, max_x = min(all_x) - padding, max(all_x) + padding
@@ -87,7 +92,6 @@ def generate_timelapse_for_file(filename: Path, mode: str = 'both', num_snapshot
         for i, idx in enumerate(indices):
             ax = axes_list[i]
             
-            gt_state = ground_truth_states[idx]
             tracker_res = tracker_results[idx]
             est_state = tracker_res.state_posterior.mean
             
@@ -99,12 +103,16 @@ def generate_timelapse_for_file(filename: Path, mode: str = 'both', num_snapshot
             do_label = (i == 0)
             
             if current_mode == 'four':
-                history_x = [s.x for s in ground_truth_states[:idx+1]]
-                history_y = [s.y for s in ground_truth_states[:idx+1]]
-                ax.plot(history_y, history_x, color='royalblue', linewidth=1, label='Path' if do_label else "", zorder=1)
+                history_end = min(idx+1, len(ground_truth_states))
+                history_x = [s.x for s in ground_truth_states[:history_end]]
+                history_y = [s.y for s in ground_truth_states[:history_end]]
+                if history_x:
+                    ax.plot(history_y, history_x, color='royalblue', linewidth=1, label='Path' if do_label else "", zorder=1)
             
-            gt_shape_x, gt_shape_y = compute_exact_vessel_shape_global(gt_state, config.extent.shape_coords_body)
-            ax.plot(gt_shape_y, gt_shape_x, color='black', linewidth=1.5, label='GT Shape' if do_label else "", zorder=2)
+            if idx < len(ground_truth_states):
+                gt_state = ground_truth_states[idx]
+                gt_shape_x, gt_shape_y = compute_exact_vessel_shape_global(gt_state, config.extent.shape_coords_body)
+                ax.plot(gt_shape_y, gt_shape_x, color='black', linewidth=1.5, label='GT Shape' if do_label else "", zorder=2)
             
             if tracker_res.state_prior is not None:
                 prior_state = tracker_res.state_prior.mean

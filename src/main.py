@@ -71,7 +71,7 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
         )
         start_x, start_y, start_yaw = 0.0, -40.0, np.pi/2
     
-    elif traj_type == "waypoints":
+    elif traj_type == "waypoints_rectangle":
         trajectory = TrajectoryConfig(
             type="waypoints",
             speed=5.0,
@@ -79,11 +79,28 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
         )
         start_x, start_y, start_yaw = 0.0, -40.0, np.pi/2
         
-    elif traj_type == "waypoints2":
+    elif traj_type == "waypoints_star":
         trajectory = TrajectoryConfig(
             type="waypoints",
             speed=5.0,
             waypoints=[(0, -40), (10, 20), (-40, 40), (-60, 0), (-40, -40), (20, 40), (60, 10), (20, -30)]
+        )
+        start_x, start_y, start_yaw = 0.0, -40.0, np.pi/2
+
+    elif traj_type == "complex_maneuvers":
+        trajectory = TrajectoryConfig(
+            type="complex_maneuvers",
+            speed=5.0,
+            waypoints=[
+                (0, -40, 6.0),    # Start fast, head towards Lidar
+                (20, 10, 4.0),    # Slow down, cross front of Lidar (shows Starboard)
+                (5, 30, 2.0),     # Sharp left turn and decelerate (shows Bow/Port)
+                (-15, 0, 7.0),    # Hard acceleration out (shows Stern)
+                (45, -20, 6.0),   # Long diagonal crossing (shows Port)
+                (60, 20, 3.0),    # Sharp turn near edge of range
+                (30, 40, 2.0),    # Slow pass over the top of the Lidar
+                (0, -40, 5.0)     # Return to start
+            ]
         )
         start_x, start_y, start_yaw = 0.0, -40.0, np.pi/2
 
@@ -106,7 +123,7 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
     sim_config = SimulationConfig(
         name = "",
         num_simulations=1,
-        num_frames=500,
+        num_frames=800,
         dt=0.1,
         seed=42,
         initial_state_gt=initial_state_gt,
@@ -120,7 +137,7 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
         lidar_position=(30.0, 0.0),
         num_rays=360,
         max_distance=140.0,
-        lidar_gt_std_dev=0.0,
+        lidar_gt_std_dev=0.15,
     )
 
     # Extent config
@@ -242,8 +259,8 @@ if __name__ == "__main__":
     selected_boat_id = "Havfruen" # Example: "1" = Sailing Yacht, "112" = Multihull
     # selected_boat_id = None # Example: "1" = Sailing Yacht, "112" = Multihull
 
-    # method_list = ["implicit_ekf", "implicit_iekf"]
-    method_list = ["iplf"]
+    method_list = ["ekf", "iekf", "implicit_ekf", "implicit_iekf", "iplf"]
+    # method_list = ["iplf"]
     # method_list = ["implicit_iekf"]
     # method_list = ["full_batch_smoother"]
     # method_list = ["ekf", "iekf"]
@@ -253,7 +270,8 @@ if __name__ == "__main__":
         # Switch Scenario Here
         # selected_trajectory = "circle" 
         # selected_trajectory = "linear"
-        selected_trajectory = "waypoints2"
+        # selected_trajectory = "waypoints_star"
+        selected_trajectory = "complex_maneuvers"
 
         # Load Configs
         sim_base, lidar_base, extent_base = get_common_configs(traj_type=selected_trajectory, N_pca=N_pca, selected_boat_id=selected_boat_id)
@@ -279,7 +297,7 @@ if __name__ == "__main__":
         boat_id = extent_base.shape_params_true.get('id', 'custom')
         config.sim.use_cache = True # Disable cache for new trajectories to ensure they are generated
         config.sim.num_frames = 800
-        config.lidar.lidar_gt_std_dev = 0.0
+        config.lidar.lidar_gt_std_dev = 0.15
         config.tracker.use_initialize_centroid = False
         config.tracker.use_D_imp_for_R = False
 
@@ -293,7 +311,7 @@ if __name__ == "__main__":
         config.tracker.use_absolute_L_W_prior = False
         config.tracker.use_L_W_aspect_ratio_prior = False
 
-        config.tracker.use_scaled_R = True
+        config.tracker.use_scaled_R = False
 
         config.tracker.force_kinematic_unobservability = False
 
@@ -302,7 +320,7 @@ if __name__ == "__main__":
 
         # Unique Name
         # config.sim.name = f"Neg_info_test_boat{boat_id}_{tracker_cfg.process_model}_{config.sim.trajectory.type}_{method}"
-        config.sim.name = f"paper_Havfruen_scaled_R_{method}"
+        config.sim.name = f"test2_complex_maneuvers_noise015_{method}"
 
         # Run
         sim_result = run_single_simulation(config=config)
