@@ -150,7 +150,7 @@ def run_single_simulation(config: Config) -> SimulationResult:
     elif tracker_cfg.process_model == "temporal":
         filter_dyn_model = Model_PCA_Temporal(**common_kwargs, eta_f=tracker_cfg.temporal_eta, pca_process_var=config.tracker.pca_eigenvalues)
     elif tracker_cfg.process_model == "inflation":
-        filter_dyn_model = Model_PCA_Inflation(**common_kwargs, lambda_f=tracker_cfg.inflation_lambda, pca_std_dev_scale=tracker_cfg.pca_std_dev_scale, pca_eigenvalues=config.tracker.pca_eigenvalues)
+        filter_dyn_model = Model_PCA_Inflation(**common_kwargs, lambda_f=tracker_cfg.inflation_lambda, pca_std_dev_scale=tracker_cfg.pca_std_dev_scale, use_proportional_pca_random_walk=tracker_cfg.use_proportional_pca_random_walk, pca_eigenvalues=config.tracker.pca_eigenvalues)
     else:
         raise ValueError(f"Unknown process model: {tracker_cfg.process_model}")
 
