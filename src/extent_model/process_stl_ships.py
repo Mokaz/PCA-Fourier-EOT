@@ -101,6 +101,15 @@ def generate_debug_plot(boat_id, mesh_vertices, points_2d, hull_points, aligned_
     ax1.scatter(v[:,0], v[:,1], v[:,2], c=v[:,2], cmap='viridis', s=1, alpha=0.5)
     ax1.set_title("1. Raw 3D Mesh")
     ax1.set_xlabel("X"); ax1.set_ylabel("Y"); ax1.set_zlabel("Z")
+    
+    # Keep aspect ratio
+    max_range = np.array([v[:,0].max()-v[:,0].min(), v[:,1].max()-v[:,1].min(), v[:,2].max()-v[:,2].min()]).max() / 2.0
+    mid_x = (v[:,0].max()+v[:,0].min()) * 0.5
+    mid_y = (v[:,1].max()+v[:,1].min()) * 0.5
+    mid_z = (v[:,2].max()+v[:,2].min()) * 0.5
+    ax1.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax1.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax1.set_zlim(mid_z - max_range, mid_z + max_range)
 
     # --- STEP 2: PROJECTION ---
     ax2 = fig.add_subplot(2, 3, 2)

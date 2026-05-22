@@ -30,10 +30,22 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
     
     # Get GT Dimensions and PCA Coeffs
     try:
-        # L_gt, W_gt = get_boat_dimensions(selected_boat_id) # NOTE We can get L and W from the database but in practice we set them manually
-        L_gt = 28.0
-        W_gt = 8.0
-        gt_pca_coeffs = get_gt_pca_coeffs_for_boat(selected_boat_id, N_pca=N_pca, pca_path=PCA_parameters_path)
+        if selected_boat_id == "Havfruen":
+            import json
+            with open("data/test_stl/Havfruen_processed.json", "r") as f:
+                havfruen_data = json.load(f)[0]
+            L_gt = havfruen_data["original_length_m"]
+            W_gt = havfruen_data["original_width_m"]
+            
+            from src.extent_model.boat_pca_utils import get_pca_coeffs_from_radii
+            unit_radii = np.array(havfruen_data["radii"])
+            unit_angles = np.linspace(-np.pi, np.pi, len(unit_radii), endpoint=False)
+            gt_pca_coeffs = get_pca_coeffs_from_radii(unit_radii, unit_angles, length=1.0, N_pca=N_pca, pca_path=PCA_parameters_path)
+        else:
+            # L_gt, W_gt = get_boat_dimensions(selected_boat_id) # NOTE We can get L and W from the database but in practice we set them manually
+            L_gt = 28.0
+            W_gt = 8.0
+            gt_pca_coeffs = get_gt_pca_coeffs_for_boat(selected_boat_id, N_pca=N_pca, pca_path=PCA_parameters_path)
     except Exception as e:
         logging.error(f"Could not load boat {selected_boat_id}: {e}")
         # Fallback to simple ellipse
@@ -113,7 +125,35 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
 
     # Extent config
     # Use "database" type to load the real shape from JSON
-    if selected_boat_id:
+    if selected_boat_id == "Havfruen":
+        import json
+        with open("data/test_stl/Havfruen_processed.json", "r") as f:
+            havfruen_data = json.load(f)[0]
+        
+        unit_radii = np.array(havfruen_data["radii"])
+        unit_angles = np.linspace(-np.pi, np.pi, len(unit_radii), endpoint=False)
+        
+        # Scale to real-world extent
+        x_unit = unit_radii * np.cos(unit_angles)
+        y_unit = unit_radii * np.sin(unit_angles)
+        
+        x_scaled = x_unit * L_gt
+        max_y_unit = np.max(np.abs(y_unit))
+        y_scaled = y_unit * ((W_gt/2.0) / max_y_unit) if max_y_unit > 0 else y_unit * W_gt
+        
+        from src.utils.tools import cart2pol
+        scaled_angles, scaled_radii = cart2pol(x_scaled, y_scaled)
+        sort_idx = np.argsort(scaled_angles)
+        
+        shape_params = {
+            "type": "custom_extent",
+            "id": "Havfruen",
+            "radii": scaled_radii[sort_idx].tolist(),
+            "angles": scaled_angles[sort_idx].tolist(),
+            "L": L_gt,
+            "W": W_gt
+        }
+    elif selected_boat_id:
         shape_params = {
             "type": "database", 
             "id": selected_boat_id,
@@ -185,7 +225,7 @@ def get_pca_tracker_config(lidar_pos, initial_state_gt, N_pca=4,
         lidar_position=np.array(lidar_pos),
         pca_eigenvalues = eigenvalues,
         # Iterative solver params
-        max_iterations=8,
+        max_iterations=20,
         convergence_threshold=1e-6,
         # Implicit EKF specific
         use_state_clamping=True,
@@ -199,11 +239,13 @@ if __name__ == "__main__":
 
     # --- BOAT SELECTION ---
     # Select a boat from processed_ships.json
-    selected_boat_id = "154" # Example: "1" = Sailing Yacht, "112" = Multihull
+    selected_boat_id = "Havfruen" # Example: "1" = Sailing Yacht, "112" = Multihull
     # selected_boat_id = None # Example: "1" = Sailing Yacht, "112" = Multihull
 
     # method_list = ["implicit_ekf", "implicit_iekf"]
     method_list = ["iplf"]
+    # method_list = ["implicit_iekf"]
+    # method_list = ["full_batch_smoother"]
     # method_list = ["ekf", "iekf"]
     for method in method_list:
         N_pca = 4
@@ -226,7 +268,7 @@ if __name__ == "__main__":
         tracker_cfg.method = method
 
         # If using Implicit EKF, set max_iterations to 1 for EKF behavior
-        if method == "implicit_iekf":
+        if method == "implicit_ekf":
             tracker_cfg.max_iterations = 1
 
         config = Config(sim=sim_base, lidar=lidar_base, tracker=tracker_cfg, extent=extent_base)
@@ -251,9 +293,16 @@ if __name__ == "__main__":
         config.tracker.use_absolute_L_W_prior = False
         config.tracker.use_L_W_aspect_ratio_prior = False
 
+        config.tracker.use_scaled_R = True
+
+        config.tracker.force_kinematic_unobservability = False
+
+        # Smoother
+        config.tracker.smoother_window_size = 10
+
         # Unique Name
         # config.sim.name = f"Neg_info_test_boat{boat_id}_{tracker_cfg.process_model}_{config.sim.trajectory.type}_{method}"
-        config.sim.name = f"cubature_fix_{method}"
+        config.sim.name = f"paper_Havfruen_scaled_R_{method}"
 
         # Run
         sim_result = run_single_simulation(config=config)

@@ -100,47 +100,8 @@ def load_ground_truth_sequence(h5_filepath, dt=0.1, N_pca=4):
     """Loads ground truth kinematics from the HDF5 file into a TimeSequence of State_PCA."""
     print(f"Loading ground truth from {h5_filepath}...")
     gt_ts = TimeSequence()
-    
-    # Load PCA parameters to compute exact PCA coeffs for the target shape
-    from src.extent_model.boat_pca_utils import get_pca_coeffs_from_radii
-    pca_path = "data/input_parameters/ShipDatasetPCAParameters.npz"
-    
-    L_gt = 20.0
-    W_gt = 6.0
-    pca_coeffs_gt = np.zeros(N_pca)
-    
     try:
         with h5py.File(h5_filepath, 'r') as f:
-            # Extract extent and compute L, W and PCA coeffs
-            if 'extendRadii' in f['ship_trajectory_0']:
-                extend_radii = f['ship_trajectory_0']['extendRadii'][:].flatten()
-                extend_angles = f['ship_trajectory_0']['extendAngles'][:].flatten()
-                
-                xs_raw = extend_radii * np.cos(extend_angles)
-                ys_raw = extend_radii * np.sin(extend_angles)
-                L_gt = np.max(xs_raw) - np.min(xs_raw)
-                W_gt = np.max(ys_raw) - np.min(ys_raw)
-                
-                # Center the true bounding box to (0,0) before taking PCA
-                cx = (np.max(xs_raw) + np.min(xs_raw)) / 2.0
-                cy = (np.max(ys_raw) + np.min(ys_raw)) / 2.0
-                xs_cen = xs_raw - cx
-                ys_cen = ys_raw - cy
-                
-                # The PCA model was trained on dimension-squashed 1x1 bounding boxes
-                xs_squashed = xs_cen / L_gt
-                ys_squashed = ys_cen / W_gt
-
-                extend_radii = np.sqrt(xs_squashed**2 + ys_squashed**2)
-                extend_angles = np.arctan2(ys_squashed, xs_squashed)
-
-                # Must sort specifically after wrapping/centering to maintain monotonic order
-                sort_idx = np.argsort(extend_angles)
-                extend_angles = extend_angles[sort_idx]
-                extend_radii = extend_radii[sort_idx]
-
-                pca_coeffs_gt = get_pca_coeffs_from_radii(extend_radii, extend_angles, 1.0, N_pca, pca_path=pca_path)
-
             xKin = f['ship_trajectory_0']['xKin'][:]
             num_frames = xKin.shape[1]
             for i in range(num_frames):
@@ -155,15 +116,15 @@ def load_ground_truth_sequence(h5_filepath, dt=0.1, N_pca=4):
                 
                 gt_state = State_PCA(
                     x=x, y=y, yaw=yaw, vel_x=vel_x, vel_y=vel_y, yaw_rate=yaw_rate,
-                    length=L_gt, width=W_gt, pca_coeffs=pca_coeffs_gt
+                    length=20.0, width=6.0, pca_coeffs=np.zeros(N_pca)
                 )
                 gt_ts.insert(time, gt_state)
     except Exception as e:
         print(f"Error loading ground truth: {e}")
         
-    return gt_ts, L_gt, W_gt, pca_coeffs_gt
+    return gt_ts
 
-def setup_real_data_config(init_x=30.0, init_y=30.0, init_yaw=np.pi/4, L_gt=20.0, W_gt=6.0, init_pca_coeffs=None, dt=0.1, N_pca=4):
+def setup_real_data_config(init_x=30.0, init_y=30.0, dt=0.1, N_pca=4):
     """Creates the configurations needed for the tracker."""
     
     # 1. Simulation Config (Used mostly for metadata here since we aren't simulating)
@@ -185,7 +146,7 @@ def setup_real_data_config(init_x=30.0, init_y=30.0, init_yaw=np.pi/4, L_gt=20.0
         with h5py.File("data/real_datasets/Nicholasdata_filtered.h5", 'r') as f:
             extend_radii = f['ship_trajectory_0']['extendRadii'][:]
             extend_angles = f['ship_trajectory_0']['extendAngles'][:]
-        shape_params = {"type": "true_extent", "radii": extend_radii, "angles": extend_angles}
+        shape_params = {"type": "custom_extent", "radii": extend_radii, "angles": extend_angles}
     except:
         print("Could not load real extent, falling back to ellipse.")
         shape_params = {"type": "ellipse", "L": 20.0, "W": 6.0}
@@ -197,12 +158,11 @@ def setup_real_data_config(init_x=30.0, init_y=30.0, init_yaw=np.pi/4, L_gt=20.0
     )
 
     # 4. Tracker Config
-    if init_pca_coeffs is None:
-        init_pca_coeffs = np.zeros(N_pca)
-
+    # WARNING: You must set the initial state close to where the ship first appears in zPos!
+    # I have set this to an arbitrary position (x=30, y=30). You may need to adjust this.
     initial_state_tracker = State_PCA(
-        x=init_x, y=init_y, yaw=init_yaw, vel_x=0.0, vel_y=0.0, yaw_rate=0.0,
-        length=L_gt, width=W_gt, pca_coeffs=init_pca_coeffs
+        x=init_x, y=init_y, yaw=np.pi/4, vel_x=0.0, vel_y=0.0, yaw_rate=0.0,
+        length=20.0, width=6.0, pca_coeffs=np.zeros(N_pca)
     )
 
     initial_std_devs_tracker = State_PCA(
@@ -224,7 +184,7 @@ def setup_real_data_config(init_x=30.0, init_y=30.0, init_yaw=np.pi/4, L_gt=20.0
         initial_state=initial_state_tracker,
         initial_std_devs=initial_std_devs_tracker,
         lidar_position=np.array(lidar_config.lidar_position),
-        use_initialize_centroid=True,
+        use_initialize_centroid=True, # Helps snap the initial state to the first point cloud!
         use_negative_info_angular=True,
         use_negative_info_front=True,
     )
@@ -244,22 +204,21 @@ def run_real_dataset():
     
     H5_FILE_PATH = "data/real_datasets/Nicholasdata_filtered.h5"
     if os.path.exists(H5_FILE_PATH):
-        ground_truth_ts, L_gt, W_gt, pca_coeffs_gt = load_ground_truth_sequence(H5_FILE_PATH, dt=dt, N_pca=4)
-        
-        gt_first = ground_truth_ts.get(0.0) if ground_truth_ts else None
-        if gt_first is not None:
-            init_x = gt_first.x
-            init_y = gt_first.y
-            init_yaw = gt_first.yaw
-        else:
-            init_x, init_y, init_yaw = 30.0, 30.0, np.pi/4
+        ground_truth_ts = load_ground_truth_sequence(H5_FILE_PATH, dt=dt, N_pca=4)
     else:
         ground_truth_ts = TimeSequence()
-        L_gt, W_gt, pca_coeffs_gt = 20.0, 6.0, np.zeros(4)
-        init_x, init_y, init_yaw = 30.0, 30.0, np.pi/4
+
+    # Extract first valid measurement to initialize position
+    init_x = 30.0
+    init_y = 30.0
+    for ts, scan in measurements_ts.items():
+        if scan.x.size > 0:
+            init_x = np.mean(scan.x)
+            init_y = np.mean(scan.y)
+            break
 
     # 1. Setup config and load data
-    config = setup_real_data_config(init_x=init_x, init_y=init_y, init_yaw=init_yaw, L_gt=L_gt, W_gt=W_gt, init_pca_coeffs=None, dt=dt)
+    config = setup_real_data_config(init_x=init_x, init_y=init_y, dt=dt)
     config.sim.num_frames = len(measurements_ts)
 
     # 2. Setup the dynamic and measurement models
@@ -369,6 +328,7 @@ def run_real_dataset():
         pass
 
     print(f"Tracking complete! Saved to {filename}")
+    print("You can now open this folder in your analysis scripts.")
 
 if __name__ == "__main__":
     run_real_dataset()

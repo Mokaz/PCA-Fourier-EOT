@@ -174,11 +174,11 @@ class ExtentConfig:
                 else:
                     radii[idx] = np.interp(np.pi - angle, angles_interpol, r_interpol, period=2*np.pi)
 
-        elif shape_type == "true_extent":
+        elif shape_type == "custom_extent":
             true_radii = shape_params_true.get("radii")
             true_angles = shape_params_true.get("angles")
             if true_radii is None or true_angles is None:
-                raise ValueError("true_extent requires 'radii' and 'angles'")
+                raise ValueError("custom_extent requires 'radii' and 'angles'")
             true_radii = np.array(true_radii).flatten()
             true_angles = np.array(true_angles).flatten()
             # Ensure angles are sorted and unwrap if needed for interpolation
@@ -249,6 +249,7 @@ class TrackerConfig:
     use_mahalanobis_projection: bool = True
     mahalanobis_projection_prob: float = 0.99
     use_negative_info_angular: bool = False
+    force_kinematic_unobservability: bool = False
     use_negative_info_front: bool = False
     use_negative_info_centroid: bool = False
     radial_margin: float = 0.1

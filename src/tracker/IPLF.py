@@ -43,6 +43,7 @@ class IPLF(Tracker):
         self.use_negative_info_angular = getattr(config.tracker, 'use_negative_info_angular', False)
         self.use_negative_info_front = getattr(config.tracker, 'use_negative_info_front', False)
         self.use_negative_info_centroid = getattr(config.tracker, 'use_negative_info_centroid', False)
+        self.force_kinematic_unobservability = getattr(config.tracker, 'force_kinematic_unobservability', False)
         self.radial_margin = getattr(config.tracker, 'radial_margin', 0.1)
         self.use_exact_extreme_angle = getattr(config.tracker, 'use_exact_extreme_angle', False)
         self.use_scaled_R = getattr(config.tracker, 'use_scaled_R', False)
@@ -170,7 +171,8 @@ class IPLF(Tracker):
             # --- STABILITY FIX: KINEMATIC UNOBSERVABILITY ---
             # Single-frame spatial measurements provide exactly zero information about 
             # instantaneous velocity or yaw_rate. Force to zero to prevent Cubature noise.
-            A_imp[:, 3:6] = 0.0
+            if self.force_kinematic_unobservability:
+                A_imp[:, 3:6] = 0.0
             
             # Omega is the Linearization Noise (Captures non-linearity uncertainty)
             Omega_imp = Phi - A_imp @ state_iter_cov @ A_imp.T

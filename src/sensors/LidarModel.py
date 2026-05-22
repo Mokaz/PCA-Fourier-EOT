@@ -219,17 +219,17 @@ class LidarMeasurementModel(SensorModel[Sequence[LidarScan]]):
         r_prime_vals = (g_prime_mat.T @ fourier_weights).flatten() # (N,)
         
         # 3. Calculate the Tangent Vector h_theta
-        # h_theta = R @ S @ (u_perp * r + u * r_prime)
+        # h_theta = R @ E @ (u_perp * r + u * r_prime)
         u_vec = unit_vector(angles)       # [cos, sin], Shape (2, N)
         u_perp = np.stack([-np.sin(angles), np.cos(angles)], axis=0) # [-sin, cos]
         
-        S_mat = np.diag([L, W])
+        E_mat = np.diag([L, W])
         
         # Vectorized term inside parenthesis: (2, N)
         term_inner = u_perp * r_vals + u_vec * r_prime_vals
         
         # Rotate and Scale: (2, N)
-        h_theta = R_mat @ S_mat @ term_inner
+        h_theta = R_mat @ E_mat @ term_inner
         
         # 4. Calculate Angle Gradients (dTheta/dX)
         inv_rho2 = 1.0 / np.maximum(rho2, 0.05)  # Avoid division by zero with a small threshold
@@ -268,14 +268,14 @@ class LidarMeasurementModel(SensorModel[Sequence[LidarScan]]):
 
             # A. Explicit Terms
             dh_dpc_exp = np.eye(2)
-            dh_dpsi_exp = R_mat @ J_rot @ S_mat @ u_i * r
+            dh_dpsi_exp = R_mat @ J_rot @ E_mat @ u_i * r
             dh_dL_exp = R_mat @ np.diag([1, 0]) @ u_i * r
             dh_dW_exp = R_mat @ np.diag([0, 1]) @ u_i * r
 
             # PCA
             g_vec = g_mat[:, i].reshape(-1, 1)
             dr_de = g_vec.T @ self.pca_eigenvectors
-            dh_de_exp = (R_mat @ S_mat @ u_i) @ dr_de
+            dh_de_exp = (R_mat @ E_mat @ u_i) @ dr_de
             
             # B. Implicit Corrections (h_theta * dTheta/dX)
             h_t = h_theta[:, i].reshape(2, 1) # (2, 1)

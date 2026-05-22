@@ -180,6 +180,8 @@ def run_single_simulation(config: Config) -> SimulationResult:
         tracker = UT_IPLF(dynamic_model=filter_dyn_model, lidar_model=lidar_model, config=config)
     elif method == "full_batch_smoother":
         tracker = FullBatchSmoother(dynamic_model=filter_dyn_model, lidar_model=lidar_model, config=config)
+    elif method == "iplf_smoother":
+        tracker = IPLFSmoother(dynamic_model=filter_dyn_model, lidar_model=lidar_model, config=config)
     else:
         raise ValueError(f"Unknown method {method}")
 

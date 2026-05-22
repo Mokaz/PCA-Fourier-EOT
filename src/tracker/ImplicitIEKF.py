@@ -182,7 +182,7 @@ class ImplicitIEKF(Tracker):
             innov_prior_list =[]
             R_prior_list =[]
 
-            # A. Absolute Size Prior
+            # Absolute Size Prior
             if self.use_absolute_L_W_prior:
                 L_target = self.prior_target_L
                 W_target = self.prior_target_W
@@ -203,7 +203,7 @@ class ImplicitIEKF(Tracker):
                 innov_prior_list.append(innov_size)
                 R_prior_list.append(R_size)
 
-            # B. Aspect Ratio Prior
+            # Aspect Ratio Prior
             if self.use_L_W_aspect_ratio_prior:
                 target_ratio = self.prior_aspect_ratio
                 std_ratio = self.prior_ratio_std 
