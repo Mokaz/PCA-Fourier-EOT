@@ -120,7 +120,6 @@ class ImplicitIEKF(Tracker):
             # 2. Explicit Constraints Fusion (Negative Info)
             any_negative_info = self.use_negative_info_angular or self.use_negative_info_front or self.use_negative_info_centroid
             if any_negative_info and num_meas > 2:
-                # No latching parameters! We re-evaluate cleanly every iteration.
                 current_virtual_constraints = self._get_virtual_constraints(measurements_local, state_iter_mean)
                 final_negative_info_count = len(current_virtual_constraints)
 
@@ -133,17 +132,23 @@ class ImplicitIEKF(Tracker):
                         )
                         ang_residual = ssa(vc['measured_val'] - gamma_pred)
                         
-                        u_x = vc['predicted_point'][0] - self.sensor_model.lidar_position[0]
-                        u_y = vc['predicted_point'][1] - self.sensor_model.lidar_position[1]
-                        rho = np.maximum(np.sqrt(u_x**2 + u_y**2), 1.0)
-                        
-                        # Convert to cartesian arc length to balance power against LiDAR variance
-                        residual = rho * ang_residual
-                        H_stack = rho * H_virt
-                        
+                        if getattr(self.config.tracker, 'use_arc_length_residual', True):
+                            u_x = vc['predicted_point'][0] - self.sensor_model.lidar_position[0]
+                            u_y = vc['predicted_point'][1] - self.sensor_model.lidar_position[1]
+                            rho = np.maximum(np.sqrt(u_x**2 + u_y**2), 1.0)
+                            
+                            # Convert to arc length
+                            residual = rho * ang_residual
+                            H_stack = rho * H_virt
+                        else:
+                            residual = ang_residual
+                            H_stack = H_virt
+                            rho = 1.0  # Only used for debugging/saving info
+                            
                         vc['ang_residual'] = float(ang_residual)
                         vc['arc_residual'] = float(residual)
                         vc['rho'] = float(rho)
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_angle', 0.01)
                         
                     elif c_type == 'front_wall':
                         H_virt, rho_pred = self.sensor_model.get_virtual_measurement_jacobian(
@@ -154,6 +159,7 @@ class ImplicitIEKF(Tracker):
                         
                         vc['residual'] = float(residual)
                         vc['rho'] = float(rho_pred)
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_front', 0.1)
 
                     elif c_type == 'centroid_depth':
                         rho_c = vc['rho_c']
@@ -165,13 +171,13 @@ class ImplicitIEKF(Tracker):
                         
                         vc['residual'] = float(residual)
                         vc['rho'] = float(rho_c)
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_centroid', 0.1)
                     
                     H_fused = np.vstack((H_fused, H_stack))
                     innovation_fused = np.append(innovation_fused, residual)
                     
-                    neg_info_std = getattr(self.config.tracker, 'R_arc_std', 0.01)
-                    R_arc = np.array([[neg_info_std ** 2]])
-                    R_fused = block_diag(R_fused, R_arc)
+                    R_neg = np.array([[neg_info_std ** 2]])
+                    R_fused = block_diag(R_fused, R_neg)
                     
             virtual_constraints_iterates.append(current_virtual_constraints)
 
@@ -381,9 +387,13 @@ class ImplicitIEKF(Tracker):
         # 3. Front Wall (Radial Boundary)
         if self.use_negative_info_front:
             if pred_ranges[min_rad_idx] < (min_meas_dist - self.radial_margin):
+                theta_front = parametric_angles[min_rad_idx]
+                if self.use_exact_extreme_angle:
+                    theta_front = self._get_exact_extreme_radius(state_pred, theta_front)
+                    
                 virtual_constraints.append({
                     'measured_val': min_meas_dist - self.radial_margin,
-                    'body_angle': parametric_angles[min_rad_idx],
+                    'body_angle': theta_front,
                     'type': 'front_wall'
                 })
 
@@ -419,6 +429,23 @@ class ImplicitIEKF(Tracker):
             unwrapped_gamma = ssa(gamma - mean_angle)
             
             return -unwrapped_gamma if is_max else unwrapped_gamma
+
+        delta = np.deg2rad(2.0)
+        bounds = (guess_theta - delta, guess_theta + delta)
+        
+        res = minimize_scalar(objective, bounds=bounds, method='bounded')
+        return res.x
+
+    def _get_exact_extreme_radius(self, state_pred: np.ndarray, guess_theta: float) -> float:
+        """
+        Uses a continuous 1D optimizer to find the exact angle theta_body* that minimizes the range,
+        preventing discretization error and satisfying Danskin's theorem.
+        """
+        def objective(theta):
+            pt_global = self.sensor_model.h_from_theta(state_pred, np.array([theta])).flatten('F')
+            u_x = pt_global[0] - self.sensor_model.lidar_position[0]
+            u_y = pt_global[1] - self.sensor_model.lidar_position[1]
+            return np.sqrt(u_x**2 + u_y**2)
 
         delta = np.deg2rad(2.0)
         bounds = (guess_theta - delta, guess_theta + delta)

@@ -62,11 +62,13 @@ def extract_iou_data(sim_name):
     return frames, ious
 
 
-def plot_iou_over_time():
+def plot_iou_over_time(test_prefix, make_square=False):
     """Iterates through runs and plots grouped IoU line charts using Matplotlib."""
     simdata_root = Path(SIMDATA_PATH)
     json_files = glob.glob(os.path.join(simdata_root, "**", "*.json"), recursive=True)
     json_files = [f for f in json_files if not f.endswith('_config.json')]
+    
+    figsize = (8, 8) if make_square else (10, 6)
     
     noiseless_data = []
     noisy_data = []
@@ -76,7 +78,7 @@ def plot_iou_over_time():
             data = json.load(f)
             
         sim_name = data.get('name')
-        if not sim_name:
+        if not sim_name or not sim_name.startswith(test_prefix):
             continue
             
         method = data.get('method', 'unknown').upper()
@@ -98,11 +100,11 @@ def plot_iou_over_time():
 
     # 1. Plot Noiseless Scenario
     if noiseless_data:
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=figsize)
         for method, frames, ious in noiseless_data:
             plt.plot(frames, ious, label=method, linewidth=2)
             
-        plt.title('Tracking IoU over Time (Zero-Noise)\nSimulation 1: Constant Speed Trajectory', fontsize=14)
+        plt.title(f'Tracking IoU over Time (Zero-Noise)\nSimulation: {test_prefix}', fontsize=14)
         plt.xlabel('Frame', fontsize=12)
         plt.ylabel('IoU', fontsize=12)
         plt.ylim(0, 1.05)
@@ -111,17 +113,19 @@ def plot_iou_over_time():
         plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=min(5, len(noiseless_data)), fancybox=True, shadow=True)
         plt.tight_layout()
         
-        plt.savefig('iou_noiseless_mpl.png', dpi=300, bbox_inches='tight')
+        save_path = f'iou_{test_prefix}_noiseless_mpl.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
-        logging.info("Saved iou_noiseless_mpl.png")
+        logging.info(f"Saved {save_path}")
             
     # 2. Plot Noisy Scenario
     if noisy_data:
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=figsize)
         for method, frames, ious in noisy_data:
             plt.plot(frames, ious, label=method, linewidth=2)
             
-        plt.title('Tracking IoU over Time (Noisy)\nSimulation 1: Constant Speed Trajectory', fontsize=14)
+        title_suffix = '(Noisy)' if test_prefix != 'test3' else '(Real Data)'
+        plt.title(f'Tracking IoU over Time {title_suffix}\nSimulation: {test_prefix}', fontsize=14)
         plt.xlabel('Frame', fontsize=12)
         plt.ylabel('IoU', fontsize=12)
         plt.ylim(0, 1.05)
@@ -130,9 +134,16 @@ def plot_iou_over_time():
         plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=min(5, len(noisy_data)), fancybox=True, shadow=True)
         plt.tight_layout()
         
-        plt.savefig('iou_noisy_mpl.png', dpi=300, bbox_inches='tight')
+        save_path = f'iou_{test_prefix}_noisy_mpl.png'
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
-        logging.info("Saved iou_noisy_mpl.png")
+        logging.info(f"Saved {save_path}")
 
 if __name__ == '__main__':
-    plot_iou_over_time()
+    import argparse
+    parser = argparse.ArgumentParser(description="Plot IoU from PKL files")
+    parser.add_argument('--test', type=str, default='test1', help='Prefix for the test, e.g., test1, test2, test3')
+    parser.add_argument('--square', action='store_true', help='Make the output plot have a 1:1 aspect ratio')
+    args = parser.parse_args()
+    
+    plot_iou_over_time(args.test, make_square=args.square)

@@ -51,7 +51,6 @@ class FullBatchSmoother(Tracker):
         self.use_negative_info_centroid = getattr(config.tracker, 'use_negative_info_centroid', False)
         self.radial_margin = getattr(config.tracker, 'radial_margin', 0.1)
         self.use_exact_extreme_angle = getattr(config.tracker, 'use_exact_extreme_angle', False)
-        self.neg_info_std = getattr(self.config.tracker, 'R_arc_std', 0.01)
 
         # Soft Priors
         self.use_absolute_L_W_prior = getattr(config.tracker, 'use_absolute_L_W_prior', False)
@@ -116,23 +115,30 @@ class FullBatchSmoother(Tracker):
                     if c_type in['min_angle', 'max_angle']:
                         H_virt, gamma_pred = self.sensor_model.get_virtual_measurement_jacobian(state_iter_mean, vc['body_angle'], is_radial=False)
                         ang_residual = ssa(vc['measured_val'] - gamma_pred)
-                        rho = np.maximum(np.sqrt((vc['predicted_point'][0] - lidar_pos[0])**2 + (vc['predicted_point'][1] - lidar_pos[1])**2), 1.0)
-                        H_stack = rho * H_virt
-                        residual = rho * ang_residual
+                        if getattr(self.config.tracker, 'use_arc_length_residual', True):
+                            rho = np.maximum(np.sqrt((vc['predicted_point'][0] - lidar_pos[0])**2 + (vc['predicted_point'][1] - lidar_pos[1])**2), 1.0)
+                            H_stack = rho * H_virt
+                            residual = rho * ang_residual
+                        else:
+                            H_stack = H_virt
+                            residual = ang_residual
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_angle', 0.01)
                     elif c_type == 'front_wall':
                         H_stack, rho_pred = self.sensor_model.get_virtual_measurement_jacobian(state_iter_mean, vc['body_angle'], is_radial=True)
                         residual = vc['measured_val'] - rho_pred
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_front', 0.1)
                     elif c_type == 'centroid_depth':
                         res_val = vc['measured_val'] - vc['rho_c']
                         H_stack = np.zeros((1, len(state_iter_mean)))
                         H_stack[0, 0] = (state_iter_mean[0] - lidar_pos[0]) / vc['rho_c']
                         H_stack[0, 1] = (state_iter_mean[1] - lidar_pos[1]) / vc['rho_c']
                         residual = res_val
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_centroid', 0.1)
                     
                     H_fused = np.vstack((H_fused, H_stack))
                     innovation_fused = np.append(innovation_fused, residual)
                     import scipy.linalg as spla
-                    R_fused = spla.block_diag(R_fused, np.array([[self.neg_info_std**2]]))
+                    R_fused = spla.block_diag(R_fused, np.array([[neg_info_std**2]]))
 
             S = H_fused @ P_pred @ H_fused.T + R_fused
             K = np.linalg.solve(S, H_fused @ P_pred.T).T
@@ -344,17 +350,23 @@ class FullBatchSmoother(Tracker):
                     if c_type in['min_angle', 'max_angle']:
                         _, gamma_pred = self.sensor_model.get_virtual_measurement_jacobian(state_k, vc['body_angle'], is_radial=False)
                         ang_res = ssa(vc['measured_val'] - gamma_pred)
-                        u_x = vc['predicted_point'][0] - self.sensor_model.lidar_position[0]
-                        u_y = vc['predicted_point'][1] - self.sensor_model.lidar_position[1]
-                        rho = np.maximum(np.sqrt(u_x**2 + u_y**2), 1.0)
-                        val = rho * ang_res
+                        if getattr(self.config.tracker, 'use_arc_length_residual', True):
+                            u_x = vc['predicted_point'][0] - self.sensor_model.lidar_position[0]
+                            u_y = vc['predicted_point'][1] - self.sensor_model.lidar_position[1]
+                            rho = np.maximum(np.sqrt(u_x**2 + u_y**2), 1.0)
+                            val = rho * ang_res
+                        else:
+                            val = ang_res
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_angle', 0.01)
                     elif c_type == 'front_wall':
                         _, rho_pred = self.sensor_model.get_virtual_measurement_jacobian(state_k, vc['body_angle'], is_radial=True)
                         val = vc['measured_val'] - rho_pred
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_front', 0.1)
                     elif c_type == 'centroid_depth':
                         val = vc['measured_val'] - vc['rho_c']
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_centroid', 0.1)
                         
-                    res.append(np.array([val / self.neg_info_std]))
+                    res.append(np.array([val / neg_info_std]))
 
             # --- E. Mahalanobis Penalty ---
             if self.use_mahalanobis_projection:

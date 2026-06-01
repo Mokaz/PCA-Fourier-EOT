@@ -242,12 +242,18 @@ class IPLF(Tracker):
                         )
                         ang_residual = ssa(vc['measured_val'] - gamma_pred)
                         
-                        u_x = vc['predicted_point'][0] - self.sensor_model.lidar_position[0]
-                        u_y = vc['predicted_point'][1] - self.sensor_model.lidar_position[1]
-                        rho = np.maximum(np.sqrt(u_x**2 + u_y**2), 1.0)
-                        
-                        residual = rho * ang_residual
-                        H_stack = rho * H_virt
+                        if getattr(self.config.tracker, 'use_arc_length_residual', True):
+                            u_x = vc['predicted_point'][0] - self.sensor_model.lidar_position[0]
+                            u_y = vc['predicted_point'][1] - self.sensor_model.lidar_position[1]
+                            rho = np.maximum(np.sqrt(u_x**2 + u_y**2), 1.0)
+                            
+                            residual = rho * ang_residual
+                            H_stack = rho * H_virt
+                        else:
+                            residual = ang_residual
+                            H_stack = H_virt
+                            
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_angle', 0.01)
                         
                     elif c_type == 'front_wall':
                         H_virt, rho_pred = self.sensor_model.get_virtual_measurement_jacobian(
@@ -255,6 +261,7 @@ class IPLF(Tracker):
                         )
                         residual = vc['measured_val'] - rho_pred
                         H_stack = H_virt
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_front', 0.1)
 
                     elif c_type == 'centroid_depth':
                         rho_c = vc['rho_c']
@@ -263,6 +270,7 @@ class IPLF(Tracker):
                         H_stack = np.zeros((1, len(state_iter_mean)))
                         H_stack[0, 0] = (state_iter_mean[0] - self.sensor_model.lidar_position[0]) / rho_c
                         H_stack[0, 1] = (state_iter_mean[1] - self.sensor_model.lidar_position[1]) / rho_c
+                        neg_info_std = getattr(self.config.tracker, 'R_neg_info_std_centroid', 0.1)
                     
                     H_fused = np.vstack((H_fused, H_stack))
                     
@@ -270,9 +278,8 @@ class IPLF(Tracker):
                     innov_virt = residual - H_stack @ state_diff
                     innovation_fused = np.append(innovation_fused, innov_virt)
                     
-                    neg_info_std = getattr(self.config.tracker, 'R_arc_std', 0.01)
-                    R_arc = np.array([[neg_info_std ** 2]])
-                    R_fused = block_diag(R_fused, R_arc)
+                    R_neg = np.array([[neg_info_std ** 2]])
+                    R_fused = block_diag(R_fused, R_neg)
                     
             virtual_constraints_iterates.append(current_virtual_constraints)
 
