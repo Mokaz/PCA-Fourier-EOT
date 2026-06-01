@@ -227,6 +227,7 @@ class TrackerConfig:
     length_std_dev: float = 0.1
     width_std_dev: float = 0.1
     pca_std_dev_scale: float = 0.3
+    use_proportional_pca_random_walk: bool = True
 
     lidar_std_dev: float = 0.15
     
