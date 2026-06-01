@@ -136,6 +136,29 @@ results_table = pn.widgets.Tabulator(
     hidden_columns=['filename']
 )
 
+available_columns = summary_df.columns.tolist()
+results_column_selector = pn.widgets.MultiChoice(
+    name='Results Columns (Metrics)',
+    options=available_columns,
+    value=[c for c in available_columns if c != 'filename'],
+    sizing_mode='stretch_width'
+)
+
+def update_results_columns(*events):
+    new_cols = results_column_selector.value
+    hidden_cols = [c for c in results_column_selector.options if c not in new_cols]
+    if 'filename' not in hidden_cols and 'filename' in summary_df.columns: 
+        hidden_cols.append('filename')
+    results_table.hidden_columns = hidden_cols
+
+results_column_selector.param.watch(update_results_columns, 'value')
+
+results_column_accordion = pn.Accordion(
+    ('Results Table Columns', results_column_selector),
+    active=[],
+    sizing_mode='stretch_width'
+)
+
 # --- Widgets ---
 # --- Status Indicator ---
 global_loading_spinner = pn.indicators.LoadingSpinner(value=False, width=30, height=30, sizing_mode='fixed')
@@ -209,6 +232,16 @@ def update_file_list(event=None):
         
     if current_val in file_selector.options:
         file_selector.value = current_val
+
+    # Update available columns for metrics table
+    new_cols = new_df.columns.tolist()
+    results_column_selector.options = new_cols
+    current_selected_cols = results_column_selector.value
+    # Keep previously selected cols that still exist, add new cols by default (or just keep what's valid)
+    valid_cols = [c for c in current_selected_cols if c in new_cols]
+    if len(valid_cols) == 0:
+        valid_cols = [c for c in new_cols if c != 'filename']
+    results_column_selector.value = valid_cols
 
 # Initialize list
 update_file_list()
@@ -1761,6 +1794,7 @@ controls = pn.Column(
     frame_input,
     iterate_selector,
     plot_settings_controls,
+    results_column_accordion,
     data_browser_mode,
     nees_group_selector,
     error_group_selector,

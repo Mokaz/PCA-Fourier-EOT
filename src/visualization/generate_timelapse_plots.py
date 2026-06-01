@@ -14,7 +14,7 @@ from src.global_project_paths import SIMDATA_PATH, FIGURES_PATH
 from src.utils.geometry_utils import compute_estimated_shape_global, compute_exact_vessel_shape_global
 from src.states.states import State_PCA, State_GP
 
-def generate_timelapse_for_file(filename: Path, mode: str = 'both', num_snapshots: int = 4):
+def generate_timelapse_for_file(filename: Path, mode: str = 'both', num_snapshots: int = 4, presentation_16_9: bool = False):
     print(f"Processing {filename.name}...")
     
     try:
@@ -51,29 +51,48 @@ def generate_timelapse_for_file(filename: Path, mode: str = 'both', num_snapshot
     all_x.append(lidar_pos[0])
     all_y.append(lidar_pos[1])
 
-    for idx in indices:
-        if idx < len(ground_truth_states):
-            s = ground_truth_states[idx]
-            all_x.append(s.x)
-            all_y.append(s.y)
-        else:
-            s_est = tracker_results[idx].state_posterior.mean
-            all_x.append(s_est.x)
-            all_y.append(s_est.y)
+    for s in ground_truth_states:
+        all_x.append(s.x)
+        all_y.append(s.y)
+        
+    for res in tracker_results:
+        s_est = res.state_posterior.mean
+        all_x.append(s_est.x)
+        all_y.append(s_est.y)
     
     padding = 20
-    min_x, max_x = min(all_x) - padding, max(all_x) + padding
-    min_y, max_y = min(all_y) - padding, max(all_y) + padding
+    base_min_x, base_max_x = min(all_x) - padding, max(all_x) + padding
+    base_min_y, base_max_y = min(all_y) - padding, max(all_y) + padding
     
-    data_height = max_x - min_x
-    data_width = max_y - min_y
+    base_data_height = base_max_x - base_min_x
+    base_data_width = base_max_y - base_min_y
     
     modes_to_run = ['single', 'four'] if mode == 'both' else [mode]
 
     for current_mode in modes_to_run:
+        min_x, max_x = base_min_x, base_max_x
+        min_y, max_y = base_min_y, base_max_y
+        data_height, data_width = base_data_height, base_data_width
+        
         if current_mode == 'single':
-            fig_width = 12
-            fig_height = fig_width * (data_height / data_width)
+            if presentation_16_9:
+                target_ratio = 16.0 / 9.0
+                current_ratio = data_width / data_height
+                if current_ratio < target_ratio:
+                    extra_w = data_height * target_ratio - data_width
+                    min_y -= extra_w / 2.0
+                    max_y += extra_w / 2.0
+                else:
+                    extra_h = data_width / target_ratio - data_height
+                    min_x -= extra_h / 2.0
+                    max_x += extra_h / 2.0
+                data_height = max_x - min_x
+                data_width = max_y - min_y
+                fig_width, fig_height = 16, 9
+            else:
+                fig_width = 12
+                fig_height = fig_width * (data_height / data_width)
+                
             fig, axs = plt.subplots(1, 1, figsize=(fig_width, fig_height))
             axes_list = [axs] * len(indices)
             
@@ -185,6 +204,8 @@ def main():
     parser = argparse.ArgumentParser(description='Generate timelapse plots.')
     parser.add_argument('--mode', type=str, default='both', choices=['single', 'four', 'both'], help='Plotting mode')
     parser.add_argument('--num_snapshots', type=int, default=4, help='Number of snapshot timesteps to plot (default: 4)')
+    parser.add_argument('--sim_name', type=str, default=None, help='Optional specific simulation name to process (matches part of filename)')
+    parser.add_argument('--presentation_16_9', action='store_true', help='Format single mode for 16:9 presentation slide')
     args = parser.parse_args()
 
     # Search recursively to handle runs inside their own directories
@@ -192,12 +213,15 @@ def main():
     # Filter out historical/old runs to process only the active new results
     files = sorted([f for f in all_files if not f.parent.name.startswith("old") and "old" not in f.parts])
     
+    if args.sim_name:
+        files = [f for f in files if args.sim_name in f.stem]
+
     if not files:
-        print("No .pkl files found in results folder.")
+        print("No .pkl files found matching the criteria in results folder.")
         return
 
     for f in files:
-        generate_timelapse_for_file(f, mode=args.mode, num_snapshots=args.num_snapshots)
+        generate_timelapse_for_file(f, mode=args.mode, num_snapshots=args.num_snapshots, presentation_16_9=args.presentation_16_9)
 
 if __name__ == "__main__":
     main()
