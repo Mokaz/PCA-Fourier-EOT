@@ -255,7 +255,12 @@ class TrackerConfig:
     use_exact_extreme_angle: bool = False
     use_D_imp_for_R: bool = True
     use_scaled_R: bool = False
-    R_arc_std: float = 0.01
+    
+    # Negative information parameters
+    use_arc_length_residual: bool = True
+    R_neg_info_std_angle: float = 0.01
+    R_neg_info_std_front: float = 0.01
+    R_neg_info_std_centroid: float = 0.01
 
     # --- Soft Extent Priors ---
     use_absolute_L_W_prior: bool = False
