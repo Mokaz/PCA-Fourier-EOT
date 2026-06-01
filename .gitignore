@@ -3,9 +3,14 @@
 *.json
 *.csv
 *.stl
+*.pdf
+*.png
+*.md
+*.txt
 
 # Ignore cache
 data/cache/
+data/debug_ships
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
