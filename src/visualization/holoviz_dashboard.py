@@ -37,6 +37,7 @@ from src.utils.tools import calculate_body_angles
 from src.utils.geometry_utils import compute_estimated_shape_global, compute_exact_vessel_shape_global, calculate_iou
 
 ASSETS_DIR = Path(__file__).parent / 'assets'
+MC_ROOT = PROJECT_ROOT / "data" / "results" / "mc_experiments"
 
 js_files = {
     'jquery': 'assets/jquery-1.11.1.min.js',
@@ -49,31 +50,50 @@ css_files = [
 pn.extension('plotly', 'tabulator', js_files=js_files, css_files=css_files)
 
 @pn.cache(max_items=5)
-def load_data(sim_name):
+def load_data(target_path):
     """Loads simulation result and performs initial analysis. Cached for performance."""
-    if not sim_name:
+    if not target_path:
         return None
-    print(f"Loading and processing {sim_name}...")
+    print(f"Loading and processing {target_path}...")
     
-    base_path = Path(SIMDATA_PATH)
-    pkl_path = None
-    
-    # Support backward compatibility and nested runs
-    pkl_matches = list(base_path.rglob(f"{sim_name}.pkl"))
-    if pkl_matches:
-        pkl_path = pkl_matches[0]
-    elif (base_path / sim_name).exists() and sim_name.endswith('.pkl'):
-        pkl_path = base_path / sim_name
+    target = Path(target_path)
+    # Check if target_path is an absolute path (from MC selection)
+    if target.is_absolute() and target.exists():
+        pkl_path = target
     else:
-        # Fallback
-        pkl_path = base_path / f"{sim_name}.pkl"
+        base_path = Path(SIMDATA_PATH)
+        pkl_path = None
+        sim_name = target_path
+        
+        # Support backward compatibility and nested runs
+        pkl_matches = list(base_path.rglob(f"{sim_name}.pkl"))
+        if pkl_matches:
+            pkl_path = pkl_matches[0]
+        elif (base_path / sim_name).exists() and sim_name.endswith('.pkl'):
+            pkl_path = base_path / sim_name
+        else:
+            # Fallback
+            pkl_path = base_path / f"{sim_name}.pkl"
+
+    if not pkl_path or not pkl_path.exists():
+        print(f"Could not find file: {target_path}")
+        return None
 
     with open(pkl_path, "rb") as f:
         sim_result = pickle.load(f)
     
     consistency_analyzer = create_consistency_analysis_from_sim_result(sim_result)
     config = sim_result.config
-    pca_params = np.load(Path(config.tracker.PCA_parameters_path))
+    
+    # Guard PCA parameter loading
+    pca_params = None
+    if hasattr(config.tracker, 'PCA_parameters_path') and config.tracker.PCA_parameters_path:
+        pca_path = Path(config.tracker.PCA_parameters_path)
+        # handle relative paths relative to project root if they don't exist as absolute
+        if not pca_path.is_absolute():
+            pca_path = PROJECT_ROOT / pca_path
+        if pca_path.exists():
+            pca_params = np.load(pca_path)
 
     return {
         "sim_result": sim_result,
@@ -184,6 +204,13 @@ def _clear_status_on_idle(e):
 
 pn.state.param.watch(_clear_status_on_idle, 'busy')
 
+# --- Main file routing param ---
+active_file_path = pn.widgets.TextInput(value='', visible=False)
+
+data_source_mode = pn.widgets.RadioButtonGroup(
+    name='Data Source', options=['Single Run', 'Monte Carlo'], value='Single Run', sizing_mode='stretch_width'
+)
+
 file_selector = pn.widgets.Select(
     name='Select Simulation File', 
     options=[None] + summary_df["name"].tolist() if "name" in summary_df else [None], 
@@ -191,12 +218,95 @@ file_selector = pn.widgets.Select(
     sizing_mode='stretch_width'
 )
 
+refresh_files_button = pn.widgets.Button(
+    name='Refresh Files',
+    button_type='primary',
+    sizing_mode='stretch_width'
+)
+
+# --- Monte Carlo Data Selectors ---
+mc_experiment_selector = pn.widgets.Select(name='MC Experiment', options=[], sizing_mode='stretch_width')
+mc_method_selector = pn.widgets.Select(name='MC Method', options=[], sizing_mode='stretch_width')
+mc_run_selector = pn.widgets.Select(name='MC Run', options=[], sizing_mode='stretch_width')
+
+def update_mc_experiments(*events):
+    if not MC_ROOT.exists():
+        mc_experiment_selector.options = []
+        return
+    exps = sorted([d.name for d in MC_ROOT.iterdir() if d.is_dir()])
+    mc_experiment_selector.options = exps
+    if exps and mc_experiment_selector.value not in exps:
+        mc_experiment_selector.value = exps[0]
+    elif exps:
+        update_mc_methods()
+
+def update_mc_methods(*events):
+    exp = mc_experiment_selector.value
+    if not exp:
+        mc_method_selector.options = []
+        return
+    exp_dir = MC_ROOT / exp
+    methods = sorted([d.name for d in exp_dir.iterdir() if d.is_dir()])
+    mc_method_selector.options = methods
+    if methods and mc_method_selector.value not in methods:
+        mc_method_selector.value = methods[0]
+    elif methods:
+        update_mc_runs()
+
+def update_mc_runs(*events):
+    exp = mc_experiment_selector.value
+    method = mc_method_selector.value
+    if not exp or not method:
+        mc_run_selector.options = []
+        return
+    runs_dir = MC_ROOT / exp / method
+    runs = sorted([f.name for f in runs_dir.glob("*.pkl")])
+    mc_run_selector.options = runs
+    if runs and mc_run_selector.value not in runs:
+        mc_run_selector.value = runs[0]
+
+mc_experiment_selector.param.watch(update_mc_methods, 'value')
+mc_method_selector.param.watch(update_mc_runs, 'value')
+
+update_mc_experiments()
+
+@pn.depends(data_source_mode.param.value, file_selector.param.value, mc_experiment_selector.param.value, mc_method_selector.param.value, mc_run_selector.param.value, watch=True)
+def sync_active_file(mode, single_run_val, exp_val, method_val, mc_run_val):
+    if mode == 'Single Run':
+        active_file_path.value = str(single_run_val) if single_run_val else ''
+    else:
+        exp = mc_experiment_selector.value
+        method = mc_method_selector.value
+        run = mc_run_selector.value
+        if exp and method and run:
+            path = MC_ROOT / exp / method / run
+            active_file_path.value = str(path)
+        else:
+            active_file_path.value = ''
+
+sync_active_file(data_source_mode.value, file_selector.value, mc_experiment_selector.value, mc_method_selector.value, mc_run_selector.value)
+
+single_run_controls = pn.Column(refresh_files_button, file_selector, sizing_mode='stretch_width')
+mc_controls = pn.Column(mc_experiment_selector, mc_method_selector, mc_run_selector, sizing_mode='stretch_width', visible=False)
+
+def toggle_source_mode(event):
+    if event.new == 'Single Run':
+        single_run_controls.visible = True
+        mc_controls.visible = False
+    else:
+        single_run_controls.visible = False
+        mc_controls.visible = True
+        sync_active_file('Monte Carlo', file_selector.value, mc_experiment_selector.value, mc_method_selector.value, mc_run_selector.value)
+
+data_source_mode.param.watch(toggle_source_mode, 'value')
+
+
 def on_table_click(event):
     if len(event.new) > 0:
         selected_idx = event.new[0]
         try:
             selected_name = results_table.value.iloc[selected_idx]['name']
-            # Only update the value, do not wipe out the options!
+            data_source_mode.value = 'Single Run'
             file_selector.value = selected_name
         except Exception as e:
             print(f"Error selecting row: {e}")
@@ -213,12 +323,6 @@ def on_dropdown_select(event):
             results_table.selection = matches
 
 file_selector.param.watch(on_dropdown_select, 'value')
-
-refresh_files_button = pn.widgets.Button(
-    name='Refresh Files',
-    button_type='primary',
-    sizing_mode='stretch_width'
-)
 
 def update_file_list(event=None):
     new_df = load_summary_dataframe()
@@ -458,12 +562,12 @@ data_browser_mode = pn.widgets.Select(
 )
 
 # --- Interactive functions ---
-@pn.depends(file_selector.param.value, watch=True)
-def update_widgets(filename):
-    if filename:
-        set_status(f"Loading '{filename}' data...")
+@pn.depends(active_file_path.param.value, watch=True)
+def update_widgets(target_path):
+    if target_path:
+        set_status(f"Loading '{target_path}' data...")
 
-    loaded_data = load_data(filename)
+    loaded_data = load_data(target_path)
     if not loaded_data:
         frame_player.visible = False
         frame_input.visible = False
@@ -534,7 +638,6 @@ def update_widgets(filename):
             'length': 'length', 'width': 'width'
         }
         # Add PCA indices dynamically (assuming they map to the slice start)
-        # Note: If State_PCA has explicit fields 'pca_coeff_0', use strings, else use indices
         base_pca_idx = 8
         for i in range(n_pca):
             custom_state_options[f'pca_coeff_{i}'] = base_pca_idx + i
@@ -606,8 +709,12 @@ def calculate_detailed_cost_breakdown(sim_result, consistency_analyzer):
     
     # Load PCA params if needed
     pca_params = None
-    if hasattr(config.tracker, 'PCA_parameters_path'):
-        pca_params = np.load(project_root / config.tracker.PCA_parameters_path)
+    if hasattr(config.tracker, 'PCA_parameters_path') and config.tracker.PCA_parameters_path:
+        pca_path = Path(config.tracker.PCA_parameters_path)
+        if not pca_path.is_absolute():
+            pca_path = project_root / pca_path
+        if pca_path.exists():
+            pca_params = np.load(pca_path)
 
     from src.dynamics.process_models import Model_PCA_CV
     from src.sensors.LidarModel import LidarMeasurementModel
@@ -656,7 +763,7 @@ def calculate_detailed_cost_breakdown(sim_result, consistency_analyzer):
             total_costs.append(meas_cost + prior_cost)
             frames.append(i)
         except Exception as e:
-            # Skip frames where calculation fails (e.g. init frame might have issues)
+            # Skip frames where calculation fails
             pass
 
     return pd.DataFrame({
@@ -671,19 +778,19 @@ cost_calc_button = pn.widgets.Button(name='Calculate Now', button_type='primary'
 cost_content_pane = pn.Column(pn.pane.Markdown("### Select a file to view Cost Breakdown"), sizing_mode="stretch_both")
 
 def update_cost_breakdown_view(event=None, force=False):
-    filename = file_selector.value
+    target_path = active_file_path.value
     log_scale = cost_breakdown_toggle.value
 
-    if not filename:
+    if not target_path:
         cost_content_pane.objects = [pn.pane.Markdown("### Select a file to view Cost Breakdown")]
         return
 
     if not force and not cost_auto_calc_checkbox.value:
-        cost_content_pane.objects = [pn.pane.Markdown(f"### Auto-calculation disabled for '{filename}'. Click 'Calculate Now' below.")]
+        cost_content_pane.objects = [pn.pane.Markdown(f"### Auto-calculation disabled for '{target_path}'. Click 'Calculate Now' below.")]
         return
 
     set_status("Calculating Cost Breakdown...")
-    loaded_data = load_data(filename)
+    loaded_data = load_data(target_path)
     if not loaded_data:
         cost_content_pane.objects = [pn.pane.Markdown("### Error loading data.")]
         return
@@ -699,7 +806,6 @@ def update_cost_breakdown_view(event=None, force=False):
         return
 
     if log_scale:
-        # Avoid log(0) or log(neg) issues
         plot_df = np.log1p(df.clip(lower=0))
         y_label = "Log Cost"
     else:
@@ -718,7 +824,7 @@ def update_cost_breakdown_view(event=None, force=False):
     cost_content_pane.objects = [pn.pane.HoloViews(plot, sizing_mode="stretch_both")]
 
 cost_calc_button.on_click(lambda e: update_cost_breakdown_view(force=True))
-file_selector.param.watch(lambda e: update_cost_breakdown_view(force=False), 'value')
+active_file_path.param.watch(lambda e: update_cost_breakdown_view(force=False), 'value')
 cost_breakdown_toggle.param.watch(lambda e: update_cost_breakdown_view(force=False), 'value')
 cost_auto_calc_checkbox.param.watch(lambda e: update_cost_breakdown_view(force=True) if e.new else None, 'value')
 
@@ -764,8 +870,6 @@ def safe_serialize(obj, max_depth=3, current_depth=0):
     if obj is None:
         return None
     
-    # Check for State objects first
-    # We try to serialize if it has state-like attributes or matching class name
     if hasattr(obj, 'radii') or hasattr(obj, 'pca_coeffs') or obj.__class__.__name__ in ['State_PCA', 'State_GP']:
         res = serialize_state_object(obj)
         if res is not None:
@@ -801,11 +905,9 @@ def safe_serialize(obj, max_depth=3, current_depth=0):
     if isinstance(obj, dict):
         return {str(k): safe_serialize(v, max_depth, current_depth + 1) for k, v in obj.items()}
         
-    # Handle Dataclasses
     if hasattr(obj, '__dataclass_fields__'):
         return {k: safe_serialize(getattr(obj, k), max_depth, current_depth + 1) for k in obj.__dataclass_fields__}
         
-    # Handle generic objects
     if hasattr(obj, '__dict__'):
         return {k: safe_serialize(v, max_depth, current_depth + 1) for k, v in obj.__dict__.items() if not k.startswith('_')}
         
@@ -832,8 +934,8 @@ persistent_plotly_pane = pn.pane.Plotly(
     config={'responsive': True}
 )
 
-def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_max, keep_zoom, reset_count, show_angle_bounds, show_front_wall, show_centroid_depth):
-    loaded_data = load_data(filename)
+def update_plotly_view(frame_idx, target_path, iterate_sel, x_min, x_max, y_min, y_max, keep_zoom, reset_count, show_angle_bounds, show_front_wall, show_centroid_depth):
+    loaded_data = load_data(target_path)
 
     if not loaded_data:
         persistent_plotly_pane.object = create_empty_figure()
@@ -870,13 +972,11 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
             virtual_constraints=None
         )
 
-    # --- UPDATED INTERNAL FUNCTION ---
     def draw_vci(vci_list, label_suffix, is_first_iteration=True):
         if not vci_list:
             return
         lidar_pos = config.lidar.lidar_position
         
-        # Accumulators for different trace types
         virt_pts_x, virt_pts_y = [], []
         virt_pred_rays_x, virt_pred_rays_y = [], []
         virt_rays_x, virt_rays_y = [], []
@@ -886,7 +986,6 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
         for vc in vci_list:
             c_type = vc.get('type', 'min_angle')
             
-            # 1. Handle Angular Constraints
             if c_type in ['min_angle', 'max_angle'] or 'predicted_point' in vc:
                 if not show_angle_bounds:
                     continue
@@ -900,8 +999,6 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
                 virt_pred_rays_x.extend([lidar_pos[0], p_ray_end[0], None])
                 virt_pred_rays_y.extend([lidar_pos[1], p_ray_end[1], None])
                 
-                # Only draw the dashed "Measured" bound if it's the first iteration shown 
-                # (to avoid clutter) AND if the checkbox is on
                 if is_first_iteration:
                     angle = vc.get('measured_val', vc.get('measured_angle'))
                     if angle is not None:
@@ -909,7 +1006,6 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
                         virt_rays_x.extend([lidar_pos[0], ray_end[0], None])
                         virt_rays_y.extend([lidar_pos[1], ray_end[1], None])
             
-            # 2. Handle Front Wall Constraints
             elif c_type == 'front_wall':
                 if not show_front_wall:
                     continue
@@ -922,7 +1018,6 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
                     fw_arcs_x.append(None)
                     fw_arcs_y.append(None)
                         
-            # 3. Handle Centroid Depth Constraints
             elif c_type == 'centroid_depth':
                 if not show_centroid_depth:
                     continue
@@ -935,7 +1030,6 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
                     cd_arcs_x.append(None)
                     cd_arcs_y.append(None)
             
-        # Add the traces to the figure if they have data
         if virt_pts_x:
             fig.add_trace(go.Scatter(x=virt_pts_y, y=virt_pts_x, mode='markers', name=f'Pred. Pts {label_suffix}', marker=dict(color='saddlebrown', size=8, symbol='diamond')))
             fig.add_trace(go.Scatter(x=virt_pred_rays_y, y=virt_pred_rays_x, mode='lines', name=f'Pred. Rays {label_suffix}', line=dict(color='saddlebrown', width=1)))
@@ -949,9 +1043,6 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
         if cd_arcs_x:
             fig.add_trace(go.Scatter(x=cd_arcs_y, y=cd_arcs_x, mode='lines', name=f'Centroid Max {label_suffix}', line=dict(color='blue', width=1.5, dash='dashdot')))
 
-    # --- END UPDATED INTERNAL FUNCTION ---
-
-    # Call draw_vci based on the iterate selector
     try:
         if hasattr(tracker_result, 'virtual_constraints_info') and tracker_result.virtual_constraints_info:
             vci = tracker_result.virtual_constraints_info
@@ -1093,7 +1184,7 @@ def update_plotly_view(frame_idx, filename, iterate_sel, x_min, x_max, y_min, y_
 pn.bind(
     update_plotly_view,
     frame_player,
-    file_selector,
+    active_file_path,
     iterate_selector,
     x_min_input,
     x_max_input,
@@ -1107,13 +1198,12 @@ pn.bind(
     watch=True
 )
 
-@pn.depends(nees_group_selector.param.value, custom_states_selector.param.value, file_selector.param.value, plot_backend_selector.param.value)
-def get_nees_view(selected_groups, custom_states, filename, backend):
-    loaded_data = load_data(filename)
+@pn.depends(nees_group_selector.param.value, custom_states_selector.param.value, active_file_path.param.value, plot_backend_selector.param.value)
+def get_nees_view(selected_groups, custom_states, target_path, backend):
+    loaded_data = load_data(target_path)
     if not loaded_data or (not selected_groups and not custom_states):
         return pn.pane.Markdown("### Select pre-defined groups or custom states to show NEES plot.")
     
-    # selected_groups already contains the values (e.g. ['x', 'y'] or 'all') from the dict
     fields_to_plot = []
     fields_to_plot.extend(selected_groups)
     
@@ -1144,57 +1234,47 @@ def get_nees_view(selected_groups, custom_states, filename, backend):
         
         return pn.pane.Bokeh(bokeh_plot, sizing_mode='stretch_both')
 
-@pn.depends(cov_matrix_selector.param.value, frame_player.param.value, file_selector.param.value)
-def get_covariance_view(matrix_name, frame_idx, filename):
-    loaded_data = load_data(filename)
+@pn.depends(cov_matrix_selector.param.value, frame_player.param.value, active_file_path.param.value)
+def get_covariance_view(matrix_name, frame_idx, target_path):
+    loaded_data = load_data(target_path)
     if not loaded_data:
         return pn.pane.Markdown("### Select a file to begin.")
 
-    # Get the specific result for this frame
     tracker_result = loaded_data["sim_result"].tracker_results_ts.values[frame_idx]
     
     attr_name = COV_MATRIX_MAPPING[matrix_name]
     gauss_obj = getattr(tracker_result, attr_name)
     
-    # Handle optional None values (e.g. initial frame prior)
     if gauss_obj is None:
         return pn.pane.Markdown(f"### {matrix_name} not available for Frame {frame_idx}")
 
     cov_matrix = gauss_obj.cov
 
     if 'state' in attr_name:
-        # Check the type of the state estimate to determine labels
-        # We look at the posterior mean to decide the structure
         state_mean = tracker_result.state_posterior.mean
         
         if isinstance(state_mean, State_GP):
-            # --- GP Labels ---
             n_radii = len(state_mean.radii)
             labels = ['x', 'y', 'yaw', 'vel_x', 'vel_y', 'yaw_rate'] + [f'radius_{i}' for i in range(n_radii)]
             
         elif isinstance(state_mean, State_PCA):
-            # --- PCA Labels ---
             n_pca = loaded_data["config"].tracker.N_pca
             labels = ['x', 'y', 'yaw', 'vel_x', 'vel_y', 'yaw_rate', 'length', 'width'] + [f'pca_{i}' for i in range(n_pca)]
             
         else:
-            # Fallback based on size if type check fails or is generic
             N = cov_matrix.shape[0]
             labels = [f'state_{i}' for i in range(N)]
             
     else: 
-        # Measurement Covariance (S_k)
         num_rays = cov_matrix.shape[0] // 2
         labels = [f'x{i}' for i in range(num_rays)] + [f'y{i}' for i in range(num_rays)]
 
-    # Safety check to prevent crashing if shapes still don't match due to some other edge case
     if len(labels) != cov_matrix.shape[0]:
         return pn.pane.Markdown(f"### Dimension Mismatch: Covariance is {cov_matrix.shape}, but generated {len(labels)} labels.")
 
     df = pd.DataFrame(cov_matrix, index=labels, columns=labels)
     df = df.iloc[::-1]
     
-    # Check condition number to warn about numerical instability
     try:
         cond_number = np.linalg.cond(cov_matrix)
         title_text = f"{matrix_name} at Frame {frame_idx} (cond={cond_number:.2e})"
@@ -1215,9 +1295,9 @@ cond_content_pane = pn.Column(pn.pane.Markdown("### Select a file to view Condit
 
 def update_cond_view(event=None, force=False):
     matrix_name = cov_matrix_selector.value
-    filename = file_selector.value
+    target_path = active_file_path.value
     
-    if not filename:
+    if not target_path:
         cond_content_pane.objects = [pn.pane.Markdown("### Select a file to view Condition Number over Time")]
         return
         
@@ -1225,7 +1305,7 @@ def update_cond_view(event=None, force=False):
         cond_content_pane.objects = [pn.pane.Markdown(f"### Auto-calculation disabled for Condition Number. Click 'Calculate Now' below.")]
         return
 
-    loaded_data = load_data(filename)
+    loaded_data = load_data(target_path)
     if not loaded_data:
         cond_content_pane.objects = [pn.pane.Markdown("### Error loading data.")]
         return
@@ -1267,7 +1347,7 @@ def update_cond_view(event=None, force=False):
     cond_content_pane.objects = [pn.pane.HoloViews(plot, sizing_mode="stretch_both")]
 
 cond_calc_button.on_click(lambda e: update_cond_view(force=True))
-file_selector.param.watch(lambda e: update_cond_view(force=False), 'value')
+active_file_path.param.watch(lambda e: update_cond_view(force=False), 'value')
 cov_matrix_selector.param.watch(lambda e: update_cond_view(force=False), 'value')
 cond_auto_calc_checkbox.param.watch(lambda e: update_cond_view(force=True) if e.new else None, 'value')
 
@@ -1277,10 +1357,10 @@ nis_content_pane = pn.Column(pn.pane.Markdown("### Select a file to view NIS"), 
 
 def update_nis_view(event=None, force=False):
     selected_field = nis_field_selector.value
-    filename = file_selector.value
+    target_path = active_file_path.value
     backend = plot_backend_selector.value
     
-    if not filename:
+    if not target_path:
         nis_content_pane.objects = [pn.pane.Markdown("### Select a file to view NIS")]
         return
         
@@ -1288,7 +1368,7 @@ def update_nis_view(event=None, force=False):
         nis_content_pane.objects = [pn.pane.Markdown(f"### Auto-calculation disabled for NIS. Click 'Calculate Now' below.")]
         return
 
-    loaded_data = load_data(filename)
+    loaded_data = load_data(target_path)
     if not loaded_data:
         nis_content_pane.objects = [pn.pane.Markdown("### Error loading data.")]
         return
@@ -1318,29 +1398,25 @@ def update_nis_view(event=None, force=False):
         nis_content_pane.objects = [pn.pane.Bokeh(bokeh_plot, sizing_mode='stretch_both')]
 
 nis_calc_button.on_click(lambda e: update_nis_view(force=True))
-file_selector.param.watch(lambda e: update_nis_view(force=False), 'value')
+active_file_path.param.watch(lambda e: update_nis_view(force=False), 'value')
 nis_field_selector.param.watch(lambda e: update_nis_view(force=False), 'value')
 plot_backend_selector.param.watch(lambda e: update_nis_view(force=False), 'value')
 nis_auto_calc_checkbox.param.watch(lambda e: update_nis_view(force=True) if e.new else None, 'value')
 
 
-@pn.depends(error_group_selector.param.value, custom_states_selector.param.value, file_selector.param.value, plot_backend_selector.param.value)
-def get_error_view(selected_groups, custom_states, filename, backend):
-    loaded_data = load_data(filename)
+@pn.depends(error_group_selector.param.value, custom_states_selector.param.value, active_file_path.param.value, plot_backend_selector.param.value)
+def get_error_view(selected_groups, custom_states, target_path, backend):
+    loaded_data = load_data(target_path)
     if not loaded_data or (not selected_groups and not custom_states):
         return pn.pane.Markdown("### Select pre-defined groups or custom states to show Error plot.")
     
-    # Flatten the selected groups into a single list of fields
     fields_to_plot = []
-    
-    # Handle group selections (which might be lists of fields)
     for group in selected_groups:
         if isinstance(group, list):
             fields_to_plot.extend(group)
         else:
             fields_to_plot.append(group)
     
-    # Handle custom state selections
     if custom_states:
         fields_to_plot.extend(custom_states)
         
@@ -1404,10 +1480,10 @@ def generate_config_code(obj, indent=4):
     lines.append(" " * (indent - 4) + ")")
     return "\n".join(lines)
 
-@pn.depends(data_browser_mode.param.value, frame_player.param.value, file_selector.param.value, data_browser_depth_slider.param.value, watch=True)
-def update_data_browser_view(mode, frame_idx, filename, depth):
+@pn.depends(data_browser_mode.param.value, frame_player.param.value, active_file_path.param.value, data_browser_depth_slider.param.value, watch=True)
+def update_data_browser_view(mode, frame_idx, target_path, depth):
     data_browser_json_pane.depth = depth
-    loaded_data = load_data(filename)
+    loaded_data = load_data(target_path)
     if not loaded_data:
         data_browser_json_pane.object = {"info": "Select a file to begin."}
         data_browser_json_pane.visible = True
@@ -1463,18 +1539,14 @@ def update_data_browser_view(mode, frame_idx, filename, depth):
         if hasattr(consistency_analyzer, 'x_err_gauss') and frame_idx < len(consistency_analyzer.x_err_gauss.values):
             err_gauss = consistency_analyzer.x_err_gauss.values[frame_idx]
             
-            # Try to recover labels for the error vector
             err_mean = err_gauss.mean
-            # We assume the error has the same structure as the posterior mean of the first frame
             if len(sim_result.tracker_results_ts.values) > 0:
                 ref_state = sim_result.tracker_results_ts.values[0].state_posterior.mean
-                
                 if not isinstance(err_mean, (State_PCA, State_GP)) and isinstance(err_mean, np.ndarray):
                     try:
-                        # Attempt to view as the reference state class
                         err_mean = err_mean.view(ref_state.__class__)
                     except Exception:
-                        pass # Fallback to array
+                        pass
 
             data_to_show = {
                 "error_mean": safe_serialize(err_mean, max_depth=4),
@@ -1505,7 +1577,6 @@ def update_data_browser_view(mode, frame_idx, filename, depth):
         data_to_show = safe_serialize(sim_result.config, max_depth=5)
         
     elif mode == 'Full Simulation Result (Summary)':
-        # Custom summary for the huge object
         data_to_show = {
             "config": "See Config mode",
             "num_frames": len(sim_result.tracker_results_ts.values),
@@ -1516,23 +1587,19 @@ def update_data_browser_view(mode, frame_idx, filename, depth):
 
     data_browser_json_pane.object = data_to_show
 
-@pn.depends(file_selector.param.value)
-def get_cost_landscape_view(filename):
-    loaded_data = load_data(filename)
+@pn.depends(active_file_path.param.value)
+def get_cost_landscape_view(target_path):
+    loaded_data = load_data(target_path)
     if not loaded_data:
         return pn.pane.Markdown("### Select a file to view Cost Landscape")
     
-    # 1. Instantiate the Component
     explorer = CostLandscapeComponent(
         sim_result=loaded_data["sim_result"],
-        tracker_config_path=None, # Config is extracted from sim_result inside the component
+        tracker_config_path=None, 
         project_root=PROJECT_ROOT
     )
     
-    # 2. Link Global Frame Player to Component
     pn.bind(explorer.update_frame, frame_player, watch=True)
-    
-    # 3. Initial update to match current slider
     explorer.update_frame(frame_player.value)
     
     return explorer
@@ -1543,19 +1610,19 @@ iou_calc_button = pn.widgets.Button(name='Calculate Now', button_type='primary',
 iou_content_pane = pn.Column(pn.pane.Markdown("### Select a file to view IoU over Time"), sizing_mode="stretch_both")
 
 def update_iou_view(event=None, force=False):
-    filename = file_selector.value
+    target_path = active_file_path.value
 
-    if not filename:
+    if not target_path:
         iou_content_pane.objects = [pn.pane.Markdown("### Select a file to view IoU over Time")]
         return
 
     if not force and not iou_auto_calc_checkbox.value:
-        iou_content_pane.objects = [pn.pane.Markdown(f"### Auto-calculation disabled for '{filename}'. Click 'Calculate Now' below.")]
+        iou_content_pane.objects = [pn.pane.Markdown(f"### Auto-calculation disabled for '{target_path}'. Click 'Calculate Now' below.")]
         return
 
     set_status("Calculating IoU (This may take a while)...")
 
-    loaded_data = load_data(filename)
+    loaded_data = load_data(target_path)
     if not loaded_data:
         iou_content_pane.objects = [pn.pane.Markdown("### Error loading data.")]
         return
@@ -1614,18 +1681,18 @@ def update_iou_view(event=None, force=False):
     set_status("Ready")
 
 iou_calc_button.on_click(lambda e: update_iou_view(force=True))
-file_selector.param.watch(lambda e: update_iou_view(force=False), 'value')
+active_file_path.param.watch(lambda e: update_iou_view(force=False), 'value')
 iou_auto_calc_checkbox.param.watch(lambda e: update_iou_view(force=True) if e.new else None, 'value')
 
 
-def get_constraints_view(filename):
-    print(f"DEBUG: get_constraints_view called with filename={filename}", flush=True)
+def get_constraints_view(target_path):
+    print(f"DEBUG: get_constraints_view called with filename={target_path}", flush=True)
     import sys
-    sys.stderr.write(f"\\n---> [Constraints View Triggered] filename={filename}\\n")
+    sys.stderr.write(f"\\n---> [Constraints View Triggered] filename={target_path}\\n")
     try:
-        loaded_data = load_data(filename)
+        loaded_data = load_data(target_path)
         if not loaded_data:
-            return pn.pane.Markdown(f"### Select a file to view Constraints History (Current: {filename})")
+            return pn.pane.Markdown(f"### Select a file to view Constraints History")
             
         sim_result = loaded_data["sim_result"]
         tracker_results = sim_result.tracker_results_ts.values
@@ -1648,7 +1715,6 @@ def get_constraints_view(filename):
             if hasattr(res, 'mahalanobis_projection') and res.mahalanobis_projection is not None:
                 frames.append(i)
                 constraints.append("Mahalanobis Projection")
-                # Handle cases where mahalanobis_projection doesn't have 3 elements
                 dist = res.mahalanobis_projection[2] if len(res.mahalanobis_projection) > 2 else "unknown"
                 if isinstance(dist, float):
                     details.append(f"dist: {dist:.2f}")
@@ -1677,7 +1743,6 @@ def get_constraints_view(filename):
                             details.append(f"rho_c: {vc.get('rho_c', 0):.2f}")
 
             if not has_new_vci and hasattr(res, 'negative_info_used') and res.negative_info_used is not None:
-                # Handle bools and ints properly
                 val = res.negative_info_used
                 if isinstance(val, bool) and val:
                     frames.append(i)
@@ -1725,7 +1790,7 @@ def save_plots(event):
         save_status.object = "Please enter a filename."
         return
         
-    loaded_data = load_data(file_selector.value)
+    loaded_data = load_data(active_file_path.value)
     if not loaded_data:
         save_status.object = "No data loaded."
         return
@@ -1788,8 +1853,9 @@ save_button.on_click(save_plots)
 controls = pn.Column(
     pn.pane.Markdown("## Controls"),
     status_row,
-    refresh_files_button,
-    file_selector,
+    data_source_mode,
+    single_run_controls,
+    mc_controls,
     frame_player,
     frame_input,
     iterate_selector,
@@ -1858,7 +1924,7 @@ iou_view = pn.Column(
     iou_content_pane, 
     sizing_mode="stretch_both"
 )
-constraints_view = pn.Column(pn.bind(get_constraints_view, file_selector.param.value), sizing_mode="stretch_both")
+constraints_view = pn.Column(pn.bind(get_constraints_view, active_file_path.param.value), sizing_mode="stretch_both")
 
 # --- Custom GoldenLayout Template ---
 template_file = ASSETS_DIR / 'golden_template.html'

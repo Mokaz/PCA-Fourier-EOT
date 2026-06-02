@@ -107,9 +107,10 @@ def _show_gt_plot(config, ground_truth_ts, extent_cfg, lidar_cfg, traj_cfg):
     except Exception as e:
         print(f"Could not show Bokeh plot: {e}")
 
-def run_single_simulation(config: Config) -> SimulationResult:
+def _setup_tracker_and_data(config: Config):
     """
-    Runs a single simulation using the senfuslib.Simulator and new architecture.
+    Sets up the tracker object and generates (or loads) ground truth and measurements.
+    Separated from the filtering loop to allow reuse in MC runs.
     """
     sim_cfg = config.sim
     tracker_cfg = config.tracker
@@ -117,6 +118,9 @@ def run_single_simulation(config: Config) -> SimulationResult:
     extent_cfg = config.extent
     
     method = tracker_cfg.method
+    # Ground truth trajectory should be identical across MC runs, so we use a fixed seed (e.g. 42)
+    gt_rng = np.random.default_rng(seed=42)
+    # Lidar noise varies per run based on the simulation seed
     rng = np.random.default_rng(seed=sim_cfg.seed)
 
     traj_cfg = sim_cfg.trajectory
@@ -139,7 +143,7 @@ def run_single_simulation(config: Config) -> SimulationResult:
         raise ValueError(f"Unknown trajectory type: {traj_cfg.type}")
 
     gt_dynamic_model = GroundTruthModel(
-        rng=rng, yaw_rate_std_dev=sim_cfg.gt_yaw_rate_std_dev,
+        rng=gt_rng, yaw_rate_std_dev=sim_cfg.gt_yaw_rate_std_dev,
         trajectory_strategy=trajectory_strategy
     )
 
@@ -200,27 +204,48 @@ def run_single_simulation(config: Config) -> SimulationResult:
         init_state=sim_cfg.initial_state_gt, end_time=sim_cfg.num_frames * sim_cfg.dt,
         dt=sim_cfg.dt, config=config, seed=str(sim_cfg.seed), use_cache=sim_cfg.use_cache
     )
-
-    # --- Generate Simulation Data ---
-    print(f"Generating simulation data for {sim_cfg.num_frames} frames...")
-    ground_truth_ts = simulator.get_gt()
     
-    if config.sim.show_gt_plot:
-        _show_gt_plot(config, ground_truth_ts, extent_cfg, lidar_cfg, traj_cfg)
+    return tracker, filter_dyn_model, lidar_model, simulator, pca_params
 
-    measurements_lidar_frame_ts = simulator.get_meas()
-    lidar_pos_global = np.array(lidar_cfg.lidar_position).reshape(2, 1)
-    measurements_global_ts = measurements_lidar_frame_ts.map(lambda scan: scan + lidar_pos_global)
-
-    # --- Run Filtering Loop ---
+def run_filtering_loop(tracker, measurements_lidar_frame_ts, ground_truth_ts=None):
     results_ts: TimeSequence[TrackerUpdateResult] = TimeSequence() 
     initial_result = tracker.get_initial_update_result()
     results_ts.insert(0.0, initial_result)
 
     for ts, measurement in tqdm(measurements_lidar_frame_ts.items(), desc="Filtering measurements"):
         tracker.predict()
-        update_result = tracker.update(measurement, ground_truth=ground_truth_ts.get_t(ts))
+        gt_t = ground_truth_ts.get_t(ts) if ground_truth_ts else None
+        update_result = tracker.update(measurement, ground_truth=gt_t)
         results_ts.insert(ts, update_result)
+        
+    return results_ts
+
+def run_single_simulation(config: Config) -> SimulationResult:
+    """
+    Runs a single simulation using the senfuslib.Simulator and new architecture.
+    """
+    sim_cfg = config.sim
+    tracker_cfg = config.tracker
+    lidar_cfg = config.lidar
+    extent_cfg = config.extent
+    
+    method = tracker_cfg.method
+
+    tracker, filter_dyn_model, lidar_model, simulator, pca_params = _setup_tracker_and_data(config)
+
+    # --- Generate Simulation Data ---
+    print(f"Generating simulation data for {sim_cfg.num_frames} frames...")
+    ground_truth_ts = simulator.get_gt()
+    
+    if config.sim.show_gt_plot:
+        _show_gt_plot(config, ground_truth_ts, extent_cfg, lidar_cfg, sim_cfg.trajectory)
+
+    measurements_lidar_frame_ts = simulator.get_meas()
+    lidar_pos_global = np.array(lidar_cfg.lidar_position).reshape(2, 1)
+    measurements_global_ts = measurements_lidar_frame_ts.map(lambda scan: scan + lidar_pos_global)
+
+    # --- Run Filtering Loop ---
+    results_ts = run_filtering_loop(tracker, measurements_lidar_frame_ts, ground_truth_ts)
 
     static_covariances = {
         "Q": filter_dyn_model.Q_d(dt=sim_cfg.dt),
@@ -290,7 +315,7 @@ def run_single_simulation(config: Config) -> SimulationResult:
         summary_data = {
             "name": run_name,
             "method": tracker_cfg.method,
-            "trajectory_type": traj_cfg.type,
+            "trajectory_type": sim_cfg.trajectory.type,
             "scenario": getattr(sim_cfg, "scenario", None),
             "num_rays": getattr(lidar_cfg, "num_rays", None),
             "use_D_imp_for_R": getattr(tracker_cfg, 'use_D_imp_for_R', False),

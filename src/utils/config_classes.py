@@ -248,13 +248,13 @@ class TrackerConfig:
     use_state_clamping: bool = True
     use_mahalanobis_projection: bool = True
     mahalanobis_projection_prob: float = 0.99
-    use_negative_info_angular: bool = False
     force_kinematic_unobservability: bool = False
-    use_negative_info_front: bool = False
-    use_negative_info_centroid: bool = False
+    use_negative_info_angular: bool = True
+    use_negative_info_front: bool = True
+    use_negative_info_centroid: bool = True
     radial_margin: float = 0.1
     use_exact_extreme_angle: bool = False
-    use_D_imp_for_R: bool = True
+    use_D_imp_for_R: bool = False
     use_scaled_R: bool = False
     
     # Negative information parameters
