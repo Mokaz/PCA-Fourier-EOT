@@ -205,6 +205,8 @@ def main():
     parser.add_argument('--mode', type=str, default='both', choices=['single', 'four', 'both'], help='Plotting mode')
     parser.add_argument('--num_snapshots', type=int, default=4, help='Number of snapshot timesteps to plot (default: 4)')
     parser.add_argument('--sim_name', type=str, default=None, help='Optional specific simulation name to process (matches part of filename)')
+    parser.add_argument('--prefix', type=str, default=None, help='Optional prefix to match the simulation name (e.g., exp1)')
+    parser.add_argument('--folder', type=str, default=None, help='Optional folder to restrict the search (e.g., single_runs)')
     parser.add_argument('--presentation_16_9', action='store_true', help='Format single mode for 16:9 presentation slide')
     args = parser.parse_args()
 
@@ -213,6 +215,12 @@ def main():
     # Filter out historical/old runs to process only the active new results
     files = sorted([f for f in all_files if not f.parent.name.startswith("old") and "old" not in f.parts])
     
+    if args.folder:
+        files = [f for f in files if args.folder in f.parts]
+        
+    if args.prefix:
+        files = [f for f in files if f.stem.startswith(args.prefix)]
+
     if args.sim_name:
         files = [f for f in files if args.sim_name in f.stem]
 

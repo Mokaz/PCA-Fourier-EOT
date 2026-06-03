@@ -32,7 +32,7 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
     try:
         if selected_boat_id == "Havfruen":
             import json
-            with open("data/test_stl/Havfruen_processed.json", "r") as f:
+            with open("data/havfruen/Havfruen_processed.json", "r") as f:
                 havfruen_data = json.load(f)[0]
             L_gt = havfruen_data["original_length_m"]
             W_gt = havfruen_data["original_width_m"]
@@ -144,7 +144,7 @@ def get_common_configs(traj_type="circle", N_pca=4, selected_boat_id="1"):
     # Use "database" type to load the real shape from JSON
     if selected_boat_id == "Havfruen":
         import json
-        with open("data/test_stl/Havfruen_processed.json", "r") as f:
+        with open("data/havfruen/Havfruen_processed.json", "r") as f:
             havfruen_data = json.load(f)[0]
         
         unit_radii = np.array(havfruen_data["radii"])

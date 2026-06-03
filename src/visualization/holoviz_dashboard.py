@@ -61,7 +61,10 @@ def load_data(target_path):
     if target.is_absolute() and target.exists():
         pkl_path = target
     else:
-        base_path = Path(SIMDATA_PATH)
+        base_path = Path(SIMDATA_PATH) / "single_runs"
+        if not base_path.exists():
+            base_path = Path(SIMDATA_PATH)
+            
         pkl_path = None
         sim_name = target_path
         
@@ -104,7 +107,12 @@ def load_data(target_path):
 
 # --- Data Loading Logic ---
 def load_summary_dataframe():
-    json_paths = sorted(Path(SIMDATA_PATH).rglob("*.json"))
+    single_runs_dir = Path(SIMDATA_PATH) / "single_runs"
+    if single_runs_dir.exists():
+        json_paths = sorted(single_runs_dir.rglob("*.json"))
+    else:
+        json_paths = []
+        
     data = []
     for jp in json_paths:
         if jp.name.endswith('_config.json'):
@@ -225,6 +233,7 @@ refresh_files_button = pn.widgets.Button(
 )
 
 # --- Monte Carlo Data Selectors ---
+mc_config_mode_selector = pn.widgets.Select(name='MC Config Type', options=['Standard Methods', 'Tuning Runs'], sizing_mode='stretch_width')
 mc_experiment_selector = pn.widgets.Select(name='MC Experiment', options=[], sizing_mode='stretch_width')
 mc_method_selector = pn.widgets.Select(name='MC Method', options=[], sizing_mode='stretch_width')
 mc_run_selector = pn.widgets.Select(name='MC Run', options=[], sizing_mode='stretch_width')
@@ -237,57 +246,85 @@ def update_mc_experiments(*events):
     mc_experiment_selector.options = exps
     if exps and mc_experiment_selector.value not in exps:
         mc_experiment_selector.value = exps[0]
-    elif exps:
+    if exps:
         update_mc_methods()
+        if data_source_mode.value == 'Monte Carlo':
+            update_file_list()
 
 def update_mc_methods(*events):
     exp = mc_experiment_selector.value
+    config_mode = mc_config_mode_selector.value
     if not exp:
         mc_method_selector.options = []
         return
+        
     exp_dir = MC_ROOT / exp
-    methods = sorted([d.name for d in exp_dir.iterdir() if d.is_dir()])
+    
+    if config_mode == 'Standard Methods':
+        methods = sorted([d.name for d in exp_dir.iterdir() if d.is_dir() and d.name != 'tuning' and d.name != 'results'])
+    else:  # Tuning Runs
+        tuning_dir = exp_dir / 'tuning'
+        if tuning_dir.exists():
+            methods = sorted([d.name for d in tuning_dir.iterdir() if d.is_dir()])
+        else:
+            methods = []
+            
     mc_method_selector.options = methods
     if methods and mc_method_selector.value not in methods:
         mc_method_selector.value = methods[0]
-    elif methods:
-        update_mc_runs()
+    elif not methods:
+        mc_method_selector.value = None
+        
+    update_mc_runs()
 
 def update_mc_runs(*events):
     exp = mc_experiment_selector.value
     method = mc_method_selector.value
+    config_mode = mc_config_mode_selector.value
     if not exp or not method:
         mc_run_selector.options = []
         return
-    runs_dir = MC_ROOT / exp / method
+        
+    if config_mode == 'Standard Methods':
+        runs_dir = MC_ROOT / exp / method
+    else:
+        runs_dir = MC_ROOT / exp / 'tuning' / method
+        
     runs = sorted([f.name for f in runs_dir.glob("*.pkl")])
     mc_run_selector.options = runs
     if runs and mc_run_selector.value not in runs:
         mc_run_selector.value = runs[0]
 
+mc_config_mode_selector.param.watch(update_mc_methods, 'value')
+mc_config_mode_selector.param.watch(lambda event: update_file_list() if data_source_mode.value == 'Monte Carlo' else None, 'value')
 mc_experiment_selector.param.watch(update_mc_methods, 'value')
+mc_experiment_selector.param.watch(lambda event: update_file_list() if data_source_mode.value == 'Monte Carlo' else None, 'value')
 mc_method_selector.param.watch(update_mc_runs, 'value')
 
 update_mc_experiments()
 
-@pn.depends(data_source_mode.param.value, file_selector.param.value, mc_experiment_selector.param.value, mc_method_selector.param.value, mc_run_selector.param.value, watch=True)
-def sync_active_file(mode, single_run_val, exp_val, method_val, mc_run_val):
+@pn.depends(data_source_mode.param.value, file_selector.param.value, mc_experiment_selector.param.value, mc_config_mode_selector.param.value, mc_method_selector.param.value, mc_run_selector.param.value, watch=True)
+def sync_active_file(mode, single_run_val, exp_val, config_mode_val, method_val, mc_run_val):
     if mode == 'Single Run':
         active_file_path.value = str(single_run_val) if single_run_val else ''
     else:
         exp = mc_experiment_selector.value
         method = mc_method_selector.value
         run = mc_run_selector.value
+        config_mode = mc_config_mode_selector.value
         if exp and method and run:
-            path = MC_ROOT / exp / method / run
+            if config_mode == 'Standard Methods':
+                path = MC_ROOT / exp / method / run
+            else:
+                path = MC_ROOT / exp / 'tuning' / method / run
             active_file_path.value = str(path)
         else:
             active_file_path.value = ''
 
-sync_active_file(data_source_mode.value, file_selector.value, mc_experiment_selector.value, mc_method_selector.value, mc_run_selector.value)
+sync_active_file(data_source_mode.value, file_selector.value, mc_experiment_selector.value, mc_config_mode_selector.value, mc_method_selector.value, mc_run_selector.value)
 
 single_run_controls = pn.Column(refresh_files_button, file_selector, sizing_mode='stretch_width')
-mc_controls = pn.Column(mc_experiment_selector, mc_method_selector, mc_run_selector, sizing_mode='stretch_width', visible=False)
+mc_controls = pn.Column(mc_config_mode_selector, mc_experiment_selector, mc_method_selector, mc_run_selector, sizing_mode='stretch_width', visible=False)
 
 def toggle_source_mode(event):
     if event.new == 'Single Run':
@@ -296,7 +333,9 @@ def toggle_source_mode(event):
     else:
         single_run_controls.visible = False
         mc_controls.visible = True
-        sync_active_file('Monte Carlo', file_selector.value, mc_experiment_selector.value, mc_method_selector.value, mc_run_selector.value)
+        sync_active_file('Monte Carlo', file_selector.value, mc_experiment_selector.value, mc_config_mode_selector.value, mc_method_selector.value, mc_run_selector.value)
+    
+    update_file_list()
 
 data_source_mode.param.watch(toggle_source_mode, 'value')
 
@@ -306,8 +345,12 @@ def on_table_click(event):
         selected_idx = event.new[0]
         try:
             selected_name = results_table.value.iloc[selected_idx]['name']
-            data_source_mode.value = 'Single Run'
-            file_selector.value = selected_name
+            if data_source_mode.value == 'Single Run':
+                file_selector.value = selected_name
+            else:
+                # In Monte Carlo mode, selected_name is the "method" / "tuning configuration"
+                if selected_name in mc_method_selector.options:
+                    mc_method_selector.value = selected_name
         except Exception as e:
             print(f"Error selecting row: {e}")
 
@@ -324,18 +367,49 @@ def on_dropdown_select(event):
 
 file_selector.param.watch(on_dropdown_select, 'value')
 
+def load_mc_summary_dataframe():
+    exp = mc_experiment_selector.value
+    config_mode = mc_config_mode_selector.value
+    if not exp:
+        return pd.DataFrame([{"name": "No MC Experiment selected"}])
+    
+    if config_mode == 'Standard Methods':
+        summary_path = MC_ROOT / exp / "mc_summary_metrics.json"
+    else:
+        summary_path = MC_ROOT / exp / "tuning" / "tuning_summary_metrics.json"
+        
+    if summary_path.exists():
+        with open(summary_path, 'r') as f:
+            data = json.load(f)
+        df = pd.DataFrame(data)
+        if "method" in df.columns:
+            df["name"] = df["method"]
+        return df
+    else:
+        return pd.DataFrame([{"name": f"No {summary_path.name} found. Run analyze_mc_experiments.py first."}])
+
 def update_file_list(event=None):
-    new_df = load_summary_dataframe()
+    if data_source_mode.value == 'Single Run':
+        new_df = load_summary_dataframe()
+    else:
+        new_df = load_mc_summary_dataframe()
+        
     results_table.value = new_df
     
     current_val = file_selector.value
-    if "name" in new_df:
-        file_selector.options = [None] + new_df["name"].tolist()
+    
+    if data_source_mode.value == 'Single Run':
+        if "name" in new_df:
+            file_selector.options = [None] + new_df["name"].tolist()
+        else:
+            file_selector.options = [None]
+            
+        if current_val in file_selector.options:
+            file_selector.value = current_val
     else:
+        # In MC mode, we don't strictly use file_selector, but we can keep it consistent
         file_selector.options = [None]
-        
-    if current_val in file_selector.options:
-        file_selector.value = current_val
+        file_selector.value = None
 
     # Update available columns for metrics table
     new_cols = new_df.columns.tolist()
@@ -344,7 +418,7 @@ def update_file_list(event=None):
     # Keep previously selected cols that still exist, add new cols by default (or just keep what's valid)
     valid_cols = [c for c in current_selected_cols if c in new_cols]
     if len(valid_cols) == 0:
-        valid_cols = [c for c in new_cols if c != 'filename']
+        valid_cols = [c for c in new_cols if c not in ('filename', 'method')]
     results_column_selector.value = valid_cols
 
 # Initialize list
@@ -1452,7 +1526,6 @@ data_browser_depth_slider = pn.widgets.IntSlider(
 data_browser_json_pane = pn.pane.JSON({}, sizing_mode='stretch_width', depth=2, theme='light')
 data_browser_code_pane = pn.widgets.CodeEditor(value="", sizing_mode='stretch_both', readonly=True, language='python', visible=False, theme='monokai')
 
-import dataclasses
 def _format_config_value(v, indent=4):
     if hasattr(v, '__dataclass_fields__'):
         return generate_config_code(v, indent)

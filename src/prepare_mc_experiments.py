@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 
 
-def prepare_mc_experiment(experiment_name, num_runs, base_seed, sim_base, lidar_base, extent_base, tracker_cfg):
+def prepare_mc_experiment(experiment_name, num_runs, base_seed, sim_base, lidar_base, extent_base, tracker_cfg, start_index=0):
     """
     Generates Ground Truth and lidar measurements for multiple MC runs and saves them.
     """
@@ -48,7 +48,7 @@ def prepare_mc_experiment(experiment_name, num_runs, base_seed, sim_base, lidar_
 
 
     # Run data generation loop
-    for i in tqdm(range(num_runs), desc="Generating MC runs"):
+    for i in tqdm(range(start_index, start_index + num_runs), desc="Generating MC runs"):
         current_seed = base_seed + i
         
         # Override seed - we must NOT use the cache to guarantee fresh generation
@@ -88,17 +88,18 @@ def prepare_mc_experiment(experiment_name, num_runs, base_seed, sim_base, lidar_
 if __name__ == "__main__":
     from src.main import get_common_configs, get_pca_tracker_config
     
-    EXPERIMENT_NAME = "exp1_linear_noise015"
-    NUM_RUNS = 100
+    EXPERIMENT_NAME = "exp2_complex_maneuvers_noise015"
+    NUM_RUNS = 50
     BASE_SEED = 1000
+    START_INDEX = 50
     
     N_pca = 4
     selected_boat_id = "Havfruen"
-    selected_trajectory = "linear"
+    selected_trajectory = "complex_maneuvers"
     
     sim_base, lidar_base, extent_base = get_common_configs(traj_type=selected_trajectory, N_pca=N_pca, selected_boat_id=selected_boat_id)
     
-    sim_base.num_frames = 300
+    sim_base.num_frames = 800
     lidar_base.lidar_gt_std_dev = 0.15
     
     tracker_cfg = get_pca_tracker_config(lidar_base.lidar_position, sim_base.initial_state_gt, N_pca)
@@ -106,4 +107,4 @@ if __name__ == "__main__":
     
     # Needs to match main.py custom user settings to ensure consistency in standard deviation initialization if used etc
     
-    prepare_mc_experiment(EXPERIMENT_NAME, NUM_RUNS, BASE_SEED, sim_base, lidar_base, extent_base, tracker_cfg)
+    prepare_mc_experiment(EXPERIMENT_NAME, NUM_RUNS, BASE_SEED, sim_base, lidar_base, extent_base, tracker_cfg, START_INDEX)

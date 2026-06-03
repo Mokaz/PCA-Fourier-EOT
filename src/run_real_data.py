@@ -361,7 +361,7 @@ def run_real_dataset():
             results_ts.insert(ts, update_result)
 
         # 5. Save Results
-        sim_dir = os.path.join(SIMDATA_PATH, config.sim.name)
+        sim_dir = os.path.join(SIMDATA_PATH, "single_runs", config.sim.name)
         os.makedirs(sim_dir, exist_ok=True)
         filename = os.path.join(sim_dir, f"{config.sim.name}.pkl")
 

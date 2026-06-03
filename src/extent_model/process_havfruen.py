@@ -7,8 +7,8 @@ from scipy.spatial import ConvexHull
 import matplotlib.pyplot as plt
 
 # --- CONFIGURATION ---
-INPUT_STL = "data/test_stl/Havfruen.stl"
-OUTPUT_DIR = "data/test_stl"
+INPUT_STL = "data/havfruen/Havfruen.stl"
+OUTPUT_DIR = "data/havfruen"
 OUTPUT_JSON = os.path.join(OUTPUT_DIR, "Havfruen_processed.json")
 OUTPUT_IMAGE = os.path.join(OUTPUT_DIR, "Havfruen_inspection.pdf")
 DEBUG_DIR = os.path.join(OUTPUT_DIR, "debug_havfruen")

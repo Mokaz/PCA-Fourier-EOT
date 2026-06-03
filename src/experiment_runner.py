@@ -254,7 +254,7 @@ def run_single_simulation(config: Config) -> SimulationResult:
 
     # --- Helper Function to Save and Evaluate ---
     def save_and_evaluate_results(results_sequence, suffix=""):
-        sim_dir = os.path.join(SIMDATA_PATH, sim_cfg.name)
+        sim_dir = os.path.join(SIMDATA_PATH, "single_runs", sim_cfg.name)
         os.makedirs(sim_dir, exist_ok=True)
         
         run_name = f"{sim_cfg.name}{suffix}"
@@ -309,7 +309,8 @@ def run_single_simulation(config: Config) -> SimulationResult:
 
         except Exception as e:
             print(f"Error calculating metrics for JSON sidecar: {e}")
-            avg_nees, full_state_rmse, rmse_pos, avg_iou, final_iou = None, None, None, None, None
+            avg_nees, avg_nis, nees_in_interval, nis_in_interval = None, None, None, None
+            full_state_rmse, rmse_pos, avg_iou, final_iou = None, None, None, None
 
         # Summary JSON
         summary_data = {

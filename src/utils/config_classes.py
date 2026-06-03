@@ -205,7 +205,7 @@ class TrackerConfig:
     PCA_parameters_path : str = 'data/input_parameters/FourierPCAParameters_scaled.npz'
 
     # Process Model selection: 'cv', 'temporal', 'inflation'
-    process_model: str = 'cv'
+    process_model: str = 'inflation'
     
     # Process Model Params
     temporal_eta: float = 0.1
@@ -248,7 +248,6 @@ class TrackerConfig:
     use_state_clamping: bool = True
     use_mahalanobis_projection: bool = True
     mahalanobis_projection_prob: float = 0.99
-    force_kinematic_unobservability: bool = False
     use_negative_info_angular: bool = True
     use_negative_info_front: bool = True
     use_negative_info_centroid: bool = True
@@ -256,6 +255,9 @@ class TrackerConfig:
     use_exact_extreme_angle: bool = False
     use_D_imp_for_R: bool = False
     use_scaled_R: bool = False
+
+    # IPLF specific
+    force_kinematic_unobservability: bool = False
     
     # Negative information parameters
     use_arc_length_residual: bool = True
