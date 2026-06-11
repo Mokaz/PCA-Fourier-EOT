@@ -1,4 +1,4 @@
-# PCA-Fourier-EOT
+# PCA-Fourier-EOT: Implicit IEKF for Extended Object Tracking
 This repository contains the code for my TTK4900 master's thesis project at NTNU Spring 2026
 
 ## Prerequisites
