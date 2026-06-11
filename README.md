@@ -1,5 +1,5 @@
-# GP-PCA-EOT
-This repository contains the code for my TTK4550 specialization project at NTNU Fall 2025
+# PCA-Fourier-EOT
+This repository contains the code for my TTK4900 master's thesis project at NTNU Spring 2026
 
 ## Prerequisites
 Use Conda environment file to make a new virtual environment to ensure all dependencies are installed.
