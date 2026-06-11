@@ -60,19 +60,24 @@ if __name__ == "__main__":
     param_grid = {
         "scenario": ["baseline"],
         # "lidar.num_rays": [1024],
-        "method": ["implicit_ekf", "implicit_smoother"],
-        "selected_boat_id": ["154"],
-        "selected_trajectory": ["waypoints2"],
+        "method": ["implicit_ekf"],
+        "selected_boat_id": ["Havfruen"],
+        "selected_trajectory": ["complex_maneuvers"],
+        "tracker.max_iterations": [1, 2, 3, 5, 10, 20],
         # "tracker.pca_std_dev_scale": [0.1, 0.3, 0.5],
-        "tracker.lidar_std_dev": [0.05, 0.15, 0.2, 0.3, 0.5],
+        # "tracker.lidar_std_dev": [0.05, 0.15, 0.2, 0.3, 0.5],
         # "tracker.use_D_imp_for_R": [True, False],
         # "tracker.use_scaled_R": [True, False],
         # "tracker.use_negative_info_angular": [True, False],
         # "tracker.use_negative_info_front": [True, False],
         # "tracker.use_negative_info_centroid": [True, False],
         # "tracker.use_initialize_centroid": [True, False],
-        "tracker.use_absolute_L_W_prior": [True],
-        "tracker.use_L_W_aspect_ratio_prior": [True]
+        # "tracker.use_absolute_L_W_prior": [True],
+        # "tracker.use_L_W_aspect_ratio_prior": [True]
+        # "tracker.use_exact_extreme_angle": [True, False],
+        # "tracker.use_arc_length_residual": [True, False],
+        # "tracker.R_neg_info_std_angle": [0.005, 0.01, 0.05, 0.1, 0.2],
+        "lidar.lidar_gt_std_dev": [0.15],
     }
 
     # --- 2. Generate Combinations ---
@@ -136,14 +141,14 @@ if __name__ == "__main__":
         if method_name == "implicit_ekf":
             tracker_cfg.max_iterations = 1
         else:
-            tracker_cfg.max_iterations = 50
+            tracker_cfg.max_iterations = 20
 
         if selected_trajectory == "waypoints":
             sim_base.num_frames = 500
         elif selected_trajectory == "waypoints2":
             sim_base.num_frames = 800
         else:
-            sim_base.num_frames = 300
+            sim_base.num_frames = 800
 
         config = Config(sim=sim_base, lidar=lidar_base, tracker=tracker_cfg, extent=extent_base)
 
@@ -169,7 +174,7 @@ if __name__ == "__main__":
 
         # Custom user settings
         config.sim.use_cache = True
-        config.lidar.lidar_gt_std_dev = 0.0
+        # config.lidar.lidar_gt_std_dev = 0.15
         # config.tracker.use_initialize_centroid = False
         config.tracker.process_model = "inflation"
 
@@ -182,6 +187,13 @@ if __name__ == "__main__":
         config.tracker.use_negative_info_angular = True
         config.tracker.use_negative_info_front = True
         config.tracker.use_negative_info_centroid = True
+
+        config.tracker.use_absolute_L_W_prior = True
+        config.tracker.use_L_W_aspect_ratio_prior = True
+
+        config.tracker.use_scaled_R = False
+
+        config.tracker.force_kinematic_unobservability = False
         
         # Standardize naming: method + scenario + boat + params + traj + seed
         config.sim.name = f"{method_name}_{scenario_name}_boat{selected_boat_id}{param_suffix}_{config.sim.trajectory.type}_seed_{config.sim.seed}"

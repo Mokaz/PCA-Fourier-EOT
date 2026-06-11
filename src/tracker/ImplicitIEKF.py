@@ -88,6 +88,7 @@ class ImplicitIEKF(Tracker):
         final_mahalanobis_projection = None
         final_negative_info_count = 0
         virtual_constraints_iterates =[]
+        H_fused_iterates = []
 
         num_rays = getattr(self.config.lidar, 'num_rays', 360)
         self.angular_margin = (2 * np.pi) / num_rays
@@ -238,6 +239,8 @@ class ImplicitIEKF(Tracker):
                 innovation_fused = np.append(innovation_fused, innov_prior_stacked)
                 R_fused = block_diag(R_fused, R_prior_stacked)
 
+            H_fused_iterates.append(H_fused.copy())
+
             # 4. IEKF State Update Equation
             S = H_fused @ P_pred @ H_fused.T + R_fused
             
@@ -310,7 +313,8 @@ class ImplicitIEKF(Tracker):
             clamped_width=final_clamped_width,
             mahalanobis_projection=final_mahalanobis_projection,
             negative_info_used=final_negative_info_count,
-            virtual_constraints_info=virtual_constraints_iterates
+            virtual_constraints_info=virtual_constraints_iterates,
+            H_fused_iterates=H_fused_iterates
         )
 
     def _get_virtual_constraints(self, measurements: LidarScan, state_pred: np.ndarray) -> list[dict]:

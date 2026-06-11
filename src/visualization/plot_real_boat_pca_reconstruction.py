@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # Setup paths
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = SRC_ROOT.parent
 sys.path.append(str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
 

@@ -20,7 +20,7 @@ logging.basicConfig(
 
 from src.utils.geometry_utils import calculate_iou, compute_exact_vessel_shape_global, compute_estimated_shape_global
 
-def analyze_mc_experiment(experiment_name, methods):
+def analyze_mc_experiment(experiment_name, methods, ignore_tuning=True):
     print(f"\n{'='*50}")
     print(f"Starting analysis for MC Experiment: {experiment_name}")
     print(f"{'='*50}")
@@ -44,7 +44,7 @@ def analyze_mc_experiment(experiment_name, methods):
         
     tuning_dir = experiment_dir / "tuning"
     tuning_methods = []
-    if tuning_dir.exists():
+    if not ignore_tuning and tuning_dir.exists():
         tuning_methods = [d.name for d in tuning_dir.iterdir() if d.is_dir()]
 
     def process_method_list(method_list, base_dir, is_tuning=False):
@@ -54,7 +54,7 @@ def analyze_mc_experiment(experiment_name, methods):
         group_name = "Tuning Runs" if is_tuning else "Standard Methods"
         print(f"\nEvaluating {group_name} in: {base_dir}")
         
-        metrics = {m: {"avg_nees": [], "rmse_pos": [], "avg_nis": [], "avg_iou": [], "nees_in_interval": [], "nis_in_interval": []} for m in method_list}
+        metrics = {m: {"rmse_pos": [], "avg_iou": [], "track_lost_flags": [], "failed_runs": [], "run_mean_nees": [], "run_mean_anis": []} for m in method_list}
         
         for method in method_list:
             print(f"\n  -> Processing method: {method}")
@@ -66,6 +66,12 @@ def analyze_mc_experiment(experiment_name, methods):
             result_files = sorted(list(method_dir.glob("*_results.pkl")))
             print(f"     Found {len(result_files)} result files. Loading and computing metrics...")
             
+            # --- NEW: Lists to hold the full time-series arrays for ensemble averaging ---
+            all_nees_ts = []
+            all_nis_ts = []
+            nx_dof = None
+            nz_dof_ts = None
+            
             for i, res_file in enumerate(result_files, 1):
                  if i % 10 == 0 or i == 1 or i == len(result_files):
                      print(f"       - Analyzing run {i}/{len(result_files)}...", end='\r')
@@ -74,20 +80,29 @@ def analyze_mc_experiment(experiment_name, methods):
                      
                  try:
                      consistency_analyzer = create_consistency_analysis_from_sim_result(sim_result)
+                     
+                     # 1. Collect NEES Time Series
                      nees_data = consistency_analyzer.get_nees(indices='all')
-                     methods_nees = nees_data.a if nees_data else None
-                     nees_in_interval = nees_data.in_interval * 100 if nees_data else None
-                     
+                     if nees_data:
+                         all_nees_ts.append(nees_data.mahal_dist_tseq.values)
+                         if nx_dof is None:
+                             nx_dof = nees_data.dofs[0] # Usually 12 for your state
+                             
+                     # 2. Collect NIS Time Series
                      nis_data = consistency_analyzer.get_nis(indices='all')
-                     methods_nis = nis_data.a if nis_data else None
-                     nis_in_interval = nis_data.in_interval * 100 if nis_data else None
+                     if nis_data:
+                         all_nis_ts.append(nis_data.mahal_dist_tseq.values)
+                         if nz_dof_ts is None:
+                             nz_dof_ts = nis_data.dofs # Number of LiDAR hits varies per frame!
                      
+                     # 3. Collect RMSE
                      rmse_pos = None
                      if hasattr(consistency_analyzer, 'x_err_gauss') and consistency_analyzer.x_err_gauss is not None:
                          pos_errs = np.array([e.mean[:2] for e in consistency_analyzer.x_err_gauss.values])
                          rmse_pos = np.sqrt(np.mean(np.sum(pos_errs**2, axis=1)))
+                         metrics[method]["rmse_pos"].append(rmse_pos)
                          
-                     # Compute IoU 
+                     # 4. Collect IoU 
                      iou_list = []
                      config = sim_result.config
                      pca_params = None
@@ -117,22 +132,78 @@ def analyze_mc_experiment(experiment_name, methods):
                              iou = calculate_iou(gt_x, gt_y, est_x, est_y)
                              iou_list.append(iou)
                              
-                     # Store config value for this method (assumes all runs in a method share the same config)
                      if "use_arc_length_residual" not in metrics[method]:
                          metrics[method]["use_arc_length_residual"] = getattr(config.tracker, 'use_arc_length_residual', None)
                      
                      if iou_list:
                          metrics[method]["avg_iou"].append(np.mean(iou_list))
                          
-                     if methods_nees is not None: metrics[method]["avg_nees"].append(methods_nees)
-                     if nees_in_interval is not None: metrics[method]["nees_in_interval"].append(nees_in_interval)
-                     if rmse_pos is not None: metrics[method]["rmse_pos"].append(rmse_pos)
-                     if methods_nis is not None: metrics[method]["avg_nis"].append(methods_nis)
-                     if nis_in_interval is not None: metrics[method]["nis_in_interval"].append(nis_in_interval)
+                         consecutive_low_iou = 0
+                         track_lost = False
+                         for iou_val in iou_list:
+                             if iou_val < 0.5:
+                                 consecutive_low_iou += 1
+                                 if consecutive_low_iou >= 30:
+                                     track_lost = True
+                                     break
+                             else:
+                                 consecutive_low_iou = 0
+                                 
+                         metrics[method]["track_lost_flags"].append(track_lost)
+                         if track_lost:
+                             metrics[method]["failed_runs"].append(res_file.name)
     
                  except Exception as e:
                      logging.error(f"Error analyzing {res_file}: {e}")
                      
+            print(f"\n     Finished loading. Computing Ensemble Metrics...")
+            from scipy.stats import chi2
+            M = len(all_nees_ts)
+            
+            # --- PROPER ENSEMBLE ANEES CALCULATION ---
+            if M > 0 and nx_dof is not None:
+                nees_matrix = np.array(all_nees_ts) # Shape: (M, K_frames)
+                anees_ts = np.mean(nees_matrix, axis=0) # Average over M runs
+                
+                # Calculate M=100 Tightened Bounds
+                lower_chi2, upper_chi2 = chi2.interval(0.95, df=M * nx_dof)
+                lower_bound_nees = lower_chi2 / M
+                upper_bound_nees = upper_chi2 / M
+                
+                nees_in_interval_pct = np.mean((anees_ts >= lower_bound_nees) & (anees_ts <= upper_bound_nees)) * 100
+                overall_avg_nees = np.mean(anees_ts)
+                metrics[method]["ensemble_anees"] = overall_avg_nees
+                metrics[method]["ensemble_nees_in_interval"] = nees_in_interval_pct
+                
+                run_mean_nees = np.mean(nees_matrix, axis=1)
+                metrics[method]["run_mean_nees"] = run_mean_nees.tolist()
+                
+                # (Optional) Save the ANEES line and bounds to disk here so you can plot it easily later!
+                # np.savez(method_dir / "anees_plot_data.npz", anees=anees_ts, lower=lower_bound_nees, upper=upper_bound_nees)
+
+            # --- PROPER ENSEMBLE ANIS CALCULATION ---
+            if M > 0 and nz_dof_ts is not None:
+                try:
+                    nis_matrix = np.array(all_nis_ts)
+                    anis_ts = np.mean(nis_matrix, axis=0)
+                    
+                    # NIS degrees of freedom changes every frame (based on # of LiDAR hits)
+                    in_interval_count = 0
+                    for k, nz in enumerate(nz_dof_ts):
+                        if k >= len(anis_ts): break
+                        l_chi2, u_chi2 = chi2.interval(0.95, df=M * nz)
+                        if (l_chi2 / M) <= anis_ts[k] <= (u_chi2 / M):
+                            in_interval_count += 1
+                            
+                    nis_in_interval_pct = (in_interval_count / len(nz_dof_ts)) * 100
+                    metrics[method]["ensemble_anis"] = np.mean(anis_ts)
+                    metrics[method]["ensemble_nis_in_interval"] = nis_in_interval_pct
+                    
+                    run_mean_anis = np.mean(nis_matrix, axis=1)
+                    metrics[method]["run_mean_anis"] = run_mean_anis.tolist()
+                except ValueError as ve:
+                    print(f"Warning: Could not process NIS matrix: {ve}")
+        
         # Summarize, Plot, and Save to JSON
         title_tag = "Tuning" if is_tuning else ""
         print(f"\n--- Monte Carlo Analysis {title_tag}: {experiment_name} ---")
@@ -140,45 +211,53 @@ def analyze_mc_experiment(experiment_name, methods):
         summary_results = []
         
         for method in method_list:
-             if metrics[method]["avg_nees"]:
-                 mean_nees = np.mean(metrics[method]["avg_nees"])
-                 std_nees = np.std(metrics[method]["avg_nees"])
-                 mean_nees_in = np.mean(metrics[method]["nees_in_interval"]) if metrics[method]["nees_in_interval"] else 0.0
-                 std_nees_in = np.std(metrics[method]["nees_in_interval"]) if metrics[method]["nees_in_interval"] else 0.0
+             if metrics[method].get("ensemble_anees"):
+                 mean_nees = metrics[method]["ensemble_anees"]
+                 nees_in_interval = metrics[method]["ensemble_nees_in_interval"]
+                 median_nees = np.median(metrics[method]["run_mean_nees"]) if metrics[method].get("run_mean_nees") else 0.0
                  
                  mean_rmse = np.mean(metrics[method]["rmse_pos"])
                  std_rmse = np.std(metrics[method]["rmse_pos"])
+                 median_rmse = np.median(metrics[method]["rmse_pos"])
                  
-                 mean_nis = np.mean(metrics[method]["avg_nis"])
-                 std_nis = np.std(metrics[method]["avg_nis"]) if metrics[method]["avg_nis"] else 0.0
-                 mean_nis_in = np.mean(metrics[method]["nis_in_interval"]) if metrics[method]["nis_in_interval"] else 0.0
-                 std_nis_in = np.std(metrics[method]["nis_in_interval"]) if metrics[method]["nis_in_interval"] else 0.0
+                 mean_nis = metrics[method].get("ensemble_anis", 0.0)
+                 nis_in_interval = metrics[method].get("ensemble_nis_in_interval", 0.0)
+                 median_nis = np.median(metrics[method]["run_mean_anis"]) if metrics[method].get("run_mean_anis") else 0.0
                  
                  mean_iou = np.mean(metrics[method]["avg_iou"]) if metrics[method]["avg_iou"] else 0.0
                  std_iou = np.std(metrics[method]["avg_iou"]) if metrics[method]["avg_iou"] else 0.0
+                 median_iou = np.median(metrics[method]["avg_iou"]) if metrics[method]["avg_iou"] else 0.0
+                 
+                 track_loss_flags = metrics[method].get("track_lost_flags", [])
+                 track_loss_rate = (sum(track_loss_flags) / len(track_loss_flags)) * 100 if track_loss_flags else 0.0
+                 failed_runs = metrics[method].get("failed_runs", [])
                  
                  print(f"\nMethod: {method}")
-                 print(f"  Runs Analyzed: {len(metrics[method]['avg_nees'])}")
-                 print(f"  Avg NEES: {mean_nees:.4f} \u00B1 {std_nees:.4f} ({mean_nees_in:.1f}% \u00B1 {std_nees_in:.1f}% in 95% CI)")
-                 print(f"  Avg NIS: {mean_nis:.4f} \u00B1 {std_nis:.4f} ({mean_nis_in:.1f}% \u00B1 {std_nis_in:.1f}% in 95% CI)")
-                 print(f"  Pos RMSE: {mean_rmse:.4f} \u00B1 {std_rmse:.4f}")
-                 print(f"  Avg IoU: {mean_iou:.4f} \u00B1 {std_iou:.4f}")
+                 print(f"  Avg ANEES: {mean_nees:.4f} (Median: {median_nees:.4f}), {nees_in_interval:.1f}% in 95% CI")
+                 print(f"  Avg ANIS: {mean_nis:.4f} (Median: {median_nis:.4f}), {nis_in_interval:.1f}% in 95% CI")
+                 print(f"  Pos RMSE: {mean_rmse:.4f} \u00B1 {std_rmse:.4f} (Median: {median_rmse:.4f})")
+                 print(f"  Avg IoU: {mean_iou:.4f} \u00B1 {std_iou:.4f} (Median: {median_iou:.4f})")
+                 print(f"  Track Loss Rate: {track_loss_rate:.1f}% ({len(failed_runs)} runs)")
+                 if failed_runs:
+                     print(f"  Failed runs: {failed_runs[:5]}{'...' if len(failed_runs) > 5 else ''}")
                  
                  summary_results.append({
                      "method": method,
                      "use_arc_length_residual": metrics[method].get("use_arc_length_residual", None),
-                     "runs_analyzed": len(metrics[method]['avg_nees']),
-                     "avg_nees": float(mean_nees),
-                     "std_nees": float(std_nees),
-                     "nees_in_interval_95": float(mean_nees_in),
-                     "std_nees_in_interval_95": float(std_nees_in),
-                     "avg_nis": float(mean_nis),
-                     "std_nis": float(std_nis),
-                     "nis_in_interval_95": float(mean_nis_in),
-                     "std_nis_in_interval_95": float(std_nis_in),
+                     "runs_analyzed": len(metrics[method]["rmse_pos"]),
+                     "track_loss_rate": float(track_loss_rate),
+                     "failed_runs": failed_runs,
+                     "avg_anees": float(mean_nees),
+                     "median_anees": float(median_nees),
+                     "anees_in_interval_95": float(nees_in_interval),
+                     "avg_anis": float(mean_nis),
+                     "median_anis": float(median_nis),
+                     "anis_in_interval_95": float(nis_in_interval),
                      "rmse_pos": float(mean_rmse),
+                     "median_rmse_pos": float(median_rmse),
                      "std_rmse_pos": float(std_rmse),
                      "avg_iou": float(mean_iou),
+                     "median_iou": float(median_iou),
                      "std_iou": float(std_iou)
                  })
                  
@@ -202,14 +281,15 @@ def analyze_mc_experiment(experiment_name, methods):
             plt.close()
         else:
             print(f"No RMSE data to plot for {title_tag}.")
-
     process_method_list(methods, experiment_dir, is_tuning=False)
     if tuning_methods:
         process_method_list(tuning_methods, tuning_dir, is_tuning=True)
 
 
 if __name__ == "__main__":
-    EXPERIMENT_NAME = "exp1_linear_noise015"
+    # EXPERIMENT_NAME = "exp1_linear_noise015"
+    # EXPERIMENT_NAME = "exp2_complex_maneuvers_noise015"
+    EXPERIMENT_NAME = "exp3_progressive_noise015"
     METHODS = []
     
-    analyze_mc_experiment(EXPERIMENT_NAME, METHODS)
+    analyze_mc_experiment(EXPERIMENT_NAME, METHODS, ignore_tuning=True)

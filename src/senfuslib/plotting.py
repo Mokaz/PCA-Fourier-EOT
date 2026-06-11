@@ -383,6 +383,7 @@ def matplotlib_show_error(
     analysis: ConsistencyAnalysis,
     fields_err: Sequence[str] = tuple(),
     title: str = '',
+    subplot_height: float = 3.0
 ) -> plt.Figure:
     """
     Creates Matplotlib plots for error analysis (Absolute Error), matching interactive_show_error.
@@ -390,7 +391,7 @@ def matplotlib_show_error(
     if not fields_err:
         return None
 
-    fig, axs = plt.subplots(len(fields_err), 1, sharex=True, figsize=(10, 3*len(fields_err)))
+    fig, axs = plt.subplots(len(fields_err), 1, sharex=True, figsize=(10, subplot_height*len(fields_err)))
     if len(fields_err) == 1:
         axs = [axs]
 
@@ -437,6 +438,7 @@ def matplotlib_show_consistency(
     fields_nis: Sequence[Union[str, List[str]]] = tuple(),
     fields_nees: Sequence[Union[str, List[str]]] = tuple(),
     title: str = '',
+    subplot_height: float = 3.0
 ) -> plt.Figure:
     """
     Creates Matplotlib plots for consistency analysis, matching interactive_show_consistency.
@@ -454,7 +456,7 @@ def matplotlib_show_consistency(
     if not all_fields:
         return None
 
-    fig, axs = plt.subplots(len(all_fields), 1, sharex=True, figsize=(10, 3*len(all_fields)))
+    fig, axs = plt.subplots(len(all_fields), 1, sharex=True, figsize=(10, subplot_height*len(all_fields)))
     if len(all_fields) == 1:
         axs = [axs]
         

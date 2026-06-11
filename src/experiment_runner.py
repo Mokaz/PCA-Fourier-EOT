@@ -220,7 +220,7 @@ def run_filtering_loop(tracker, measurements_lidar_frame_ts, ground_truth_ts=Non
         
     return results_ts
 
-def run_single_simulation(config: Config) -> SimulationResult:
+def run_single_simulation(config: Config, pregenerated_data_path: str = None) -> SimulationResult:
     """
     Runs a single simulation using the senfuslib.Simulator and new architecture.
     """
@@ -233,16 +233,27 @@ def run_single_simulation(config: Config) -> SimulationResult:
 
     tracker, filter_dyn_model, lidar_model, simulator, pca_params = _setup_tracker_and_data(config)
 
-    # --- Generate Simulation Data ---
-    print(f"Generating simulation data for {sim_cfg.num_frames} frames...")
-    ground_truth_ts = simulator.get_gt()
-    
-    if config.sim.show_gt_plot:
-        _show_gt_plot(config, ground_truth_ts, extent_cfg, lidar_cfg, sim_cfg.trajectory)
+    if pregenerated_data_path:
+        print(f"Loading simulation data from {pregenerated_data_path}...")
+        with open(pregenerated_data_path, "rb") as f:
+            run_data = pickle.load(f)
+        ground_truth_ts = run_data["gt_ts"]
+        measurements_lidar_frame_ts = run_data["meas_lidar_ts"]
+        measurements_global_ts = run_data["meas_global_ts"]
+        
+        if config.sim.show_gt_plot:
+            _show_gt_plot(config, ground_truth_ts, extent_cfg, lidar_cfg, sim_cfg.trajectory)
+    else:
+        # --- Generate Simulation Data ---
+        print(f"Generating simulation data for {sim_cfg.num_frames} frames...")
+        ground_truth_ts = simulator.get_gt()
+        
+        if config.sim.show_gt_plot:
+            _show_gt_plot(config, ground_truth_ts, extent_cfg, lidar_cfg, sim_cfg.trajectory)
 
-    measurements_lidar_frame_ts = simulator.get_meas()
-    lidar_pos_global = np.array(lidar_cfg.lidar_position).reshape(2, 1)
-    measurements_global_ts = measurements_lidar_frame_ts.map(lambda scan: scan + lidar_pos_global)
+        measurements_lidar_frame_ts = simulator.get_meas()
+        lidar_pos_global = np.array(lidar_cfg.lidar_position).reshape(2, 1)
+        measurements_global_ts = measurements_lidar_frame_ts.map(lambda scan: scan + lidar_pos_global)
 
     # --- Run Filtering Loop ---
     results_ts = run_filtering_loop(tracker, measurements_lidar_frame_ts, ground_truth_ts)

@@ -600,6 +600,16 @@ plot_backend_selector = pn.widgets.Select(
     visible=False
 )
 
+matplotlib_subplot_height_slider = pn.widgets.FloatSlider(
+    name='Matplotlib Subplot Height', value=2.0, start=0.2, end=3.0, step=0.1,
+    sizing_mode='stretch_width', visible=False
+)
+
+def update_backend_visibility(event):
+    matplotlib_subplot_height_slider.visible = (event.new == 'Matplotlib')
+
+plot_backend_selector.param.watch(update_backend_visibility, 'value')
+
 save_filename_input = pn.widgets.TextInput(
     name='Save Filename (no ext)', 
     value='plot_output',
@@ -678,7 +688,7 @@ def update_widgets(target_path):
             'Position (x, y)': ['x', 'y'],
             'Heading (yaw)': ['yaw'],
             'Velocity (vx, vy)': ['vel_x', 'vel_y'],
-            'Yaw Rate': ['yaw_rate'],
+            'Heading rate (yaw_rate)': ['yaw_rate'],
             'Shape (All Radii)': ['radii'] # Uses the 'radii' slice from State_GP
         }
         
@@ -701,6 +711,7 @@ def update_widgets(target_path):
             'Position (x, y)': ['x', 'y'],
             'Heading (yaw)': ['yaw'],
             'Velocity (vx, vy)': ['vel_x', 'vel_y'],
+            'Heading rate (yaw_rate)': ['yaw_rate'],
             'Extent (L, W)': ['length', 'width'],
             'PCA Components': ['pca_coeffs'] # Uses the 'pca_coeffs' slice
         }
@@ -1046,6 +1057,9 @@ def update_plotly_view(frame_idx, target_path, iterate_sel, x_min, x_max, y_min,
             virtual_constraints=None
         )
 
+    if iterate_sel == 'All (Highlight EKF Update)':
+        fig.update_traces(name='Estimated Extent (IEKF)', line_color='orangered', selector=dict(name='Estimated Extent'))
+
     def draw_vci(vci_list, label_suffix, is_first_iteration=True):
         if not vci_list:
             return
@@ -1128,7 +1142,7 @@ def update_plotly_view(frame_idx, target_path, iterate_sel, x_min, x_max, y_min,
                     idx = int(iterate_sel.split(' ')[1])
                     if idx < len(vci):
                         draw_vci(vci[idx], f'({iterate_sel})', is_first_iteration=True)
-                elif iterate_sel == 'All':
+                elif iterate_sel in ['All', 'All (Highlight EKF Update)']:
                     for i, cycle_vci in enumerate(vci):
                         draw_vci(cycle_vci, f'(It {i})', is_first_iteration=(i == 0))
             else:
@@ -1138,7 +1152,7 @@ def update_plotly_view(frame_idx, target_path, iterate_sel, x_min, x_max, y_min,
 
     has_iterates = hasattr(tracker_result, 'predicted_measurements_iterates') and tracker_result.predicted_measurements_iterates is not None and len(tracker_result.predicted_measurements_iterates) > 0
     if has_iterates:
-        opts = ['Final', 'All'] + [f'Iterate {i}' for i in range(len(tracker_result.predicted_measurements_iterates))]
+        opts = ['Final', 'All', 'All (Highlight EKF Update)'] + [f'Iterate {i}' for i in range(len(tracker_result.predicted_measurements_iterates))]
         if list(iterate_selector.options) != opts:
             iterate_selector.options = opts
         iterate_selector.visible = True
@@ -1147,7 +1161,7 @@ def update_plotly_view(frame_idx, target_path, iterate_sel, x_min, x_max, y_min,
 
     if tracker_result.predicted_measurement is not None:
         if has_iterates and iterate_sel != 'Final':
-            if iterate_sel == 'All':
+            if iterate_sel in ['All', 'All (Highlight EKF Update)']:
                 for i, z_pred in enumerate(tracker_result.predicted_measurements_iterates):
                     z_pred_cart = z_pred.reshape((-1, 2))
                     fig.add_trace(go.Scatter(
@@ -1179,18 +1193,29 @@ def update_plotly_view(frame_idx, target_path, iterate_sel, x_min, x_max, y_min,
             ))
 
     if has_iterates and iterate_sel != 'Final':
-        if iterate_sel == 'All':
+        if iterate_sel in ['All', 'All (Highlight EKF Update)']:
             if hasattr(tracker_result, 'iterates') and tracker_result.iterates is not None:
                 for i, state_it in enumerate(tracker_result.iterates):
                     prior_shape_x, prior_shape_y = compute_estimated_shape_global(state_it, config, pca_params)
-                    fig.add_trace(go.Scatter(
-                        x=prior_shape_y, 
-                        y=prior_shape_x, 
-                        mode='lines', 
-                        name=f'Prior/Iterate {i}', 
-                        line=dict(color='purple', dash='dot'),
-                        opacity=0.4
-                    ))
+                    
+                    if iterate_sel == 'All (Highlight EKF Update)' and i == 1:
+                        fig.add_trace(go.Scatter(
+                            x=prior_shape_y, 
+                            y=prior_shape_x, 
+                            mode='lines', 
+                            name='Prior/Iterate 1 (EKF Update)', 
+                            line=dict(color='green', dash='solid', width=2.5),
+                            opacity=0.9
+                        ))
+                    else:
+                        fig.add_trace(go.Scatter(
+                            x=prior_shape_y, 
+                            y=prior_shape_x, 
+                            mode='lines', 
+                            name=f'Prior/Iterate {i}', 
+                            line=dict(color='purple', dash='dot'),
+                            opacity=0.4
+                        ))
         elif iterate_sel.startswith('Iterate'):
             idx = int(iterate_sel.split(' ')[1])
             if hasattr(tracker_result, 'iterates') and tracker_result.iterates is not None and len(tracker_result.iterates) > idx:
@@ -1272,8 +1297,8 @@ pn.bind(
     watch=True
 )
 
-@pn.depends(nees_group_selector.param.value, custom_states_selector.param.value, active_file_path.param.value, plot_backend_selector.param.value)
-def get_nees_view(selected_groups, custom_states, target_path, backend):
+@pn.depends(nees_group_selector.param.value, custom_states_selector.param.value, active_file_path.param.value, plot_backend_selector.param.value, matplotlib_subplot_height_slider.param.value)
+def get_nees_view(selected_groups, custom_states, target_path, backend, height):
     loaded_data = load_data(target_path)
     if not loaded_data or (not selected_groups and not custom_states):
         return pn.pane.Markdown("### Select pre-defined groups or custom states to show NEES plot.")
@@ -1292,7 +1317,8 @@ def get_nees_view(selected_groups, custom_states, target_path, backend):
     if backend == 'Matplotlib':
         fig = matplotlib_show_consistency(
             analysis=consistency_analyzer, 
-            fields_nees=fields_to_plot
+            fields_nees=fields_to_plot,
+            subplot_height=height
         )
         if fig is None:
              return pn.pane.Markdown("### No data to plot for the selected fields.")
@@ -1433,6 +1459,7 @@ def update_nis_view(event=None, force=False):
     selected_field = nis_field_selector.value
     target_path = active_file_path.value
     backend = plot_backend_selector.value
+    height = matplotlib_subplot_height_slider.value
     
     if not target_path:
         nis_content_pane.objects = [pn.pane.Markdown("### Select a file to view NIS")]
@@ -1453,7 +1480,8 @@ def update_nis_view(event=None, force=False):
     if backend == 'Matplotlib':
         fig = matplotlib_show_consistency(
             analysis=consistency_analyzer, 
-            fields_nis=fields_to_plot
+            fields_nis=fields_to_plot,
+            subplot_height=height
         )
         if fig is None:
              nis_content_pane.objects = [pn.pane.Markdown("### No NIS data available.")]
@@ -1475,11 +1503,12 @@ nis_calc_button.on_click(lambda e: update_nis_view(force=True))
 active_file_path.param.watch(lambda e: update_nis_view(force=False), 'value')
 nis_field_selector.param.watch(lambda e: update_nis_view(force=False), 'value')
 plot_backend_selector.param.watch(lambda e: update_nis_view(force=False), 'value')
+matplotlib_subplot_height_slider.param.watch(lambda e: update_nis_view(force=False), 'value')
 nis_auto_calc_checkbox.param.watch(lambda e: update_nis_view(force=True) if e.new else None, 'value')
 
 
-@pn.depends(error_group_selector.param.value, custom_states_selector.param.value, active_file_path.param.value, plot_backend_selector.param.value)
-def get_error_view(selected_groups, custom_states, target_path, backend):
+@pn.depends(error_group_selector.param.value, custom_states_selector.param.value, active_file_path.param.value, plot_backend_selector.param.value, matplotlib_subplot_height_slider.param.value)
+def get_error_view(selected_groups, custom_states, target_path, backend, height):
     loaded_data = load_data(target_path)
     if not loaded_data or (not selected_groups and not custom_states):
         return pn.pane.Markdown("### Select pre-defined groups or custom states to show Error plot.")
@@ -1502,7 +1531,8 @@ def get_error_view(selected_groups, custom_states, target_path, backend):
     if backend == 'Matplotlib':
         fig = matplotlib_show_error(
             analysis=consistency_analyzer, 
-            fields_err=fields_to_plot
+            fields_err=fields_to_plot,
+            subplot_height=height
         )
         if fig is None:
              return pn.pane.Markdown("### No data to plot for the selected fields.")
@@ -1740,8 +1770,10 @@ def update_iou_view(event=None, force=False):
         'IoU': ious
     }).set_index('Frame')
 
+    avg_iou = np.mean(ious) if ious else 0.0
+
     plot = df.hvplot.line(
-        title="Intersection over Union (IoU) over Time",
+        title=f"Intersection over Union (IoU) over Time (Avg: {avg_iou:.3f})",
         ylabel="IoU",
         ylim=(0, 1.05),
         responsive=True,
@@ -1840,7 +1872,10 @@ def get_constraints_view(target_path):
             y='Constraint Type', 
             by='Constraint Type',
             hover_cols=['Details'],
-            size=150,
+            size=75,
+            alpha=0.85,
+            line_color='black',
+            line_width=0.5,
             title="Tracker Constraints Trigger History",
             height=400,
             responsive=True,
@@ -1943,6 +1978,7 @@ controls = pn.Column(
     plotting_divider,
     plotting_header,
     plot_backend_selector,
+    matplotlib_subplot_height_slider,
     save_filename_input,
     save_button,
     save_status,

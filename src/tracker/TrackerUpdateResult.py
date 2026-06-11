@@ -40,3 +40,4 @@ class TrackerUpdateResult:
     mahalanobis_projection: Optional[tuple[np.ndarray, np.ndarray, float]] = None # (old_coeffs, new_coeffs, initial_chi2_dist)
     negative_info_used: Optional[int] = None # Number of negative info constraints applied
     virtual_constraints_info: Optional[list] = None # Information about applied negative info virtual constraints
+    H_fused_iterates: Optional[list] = None # History of the fused observation matrix (positive+negative+prior) per iterate
