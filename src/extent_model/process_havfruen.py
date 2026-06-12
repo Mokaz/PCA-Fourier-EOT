@@ -50,9 +50,18 @@ def generate_debug_plot(boat_id, mesh_vertices, points_2d, hull_points, aligned_
     """
     Generates a 6-panel debug plot.
     """
+    plt.rcParams.update({
+        'font.size': 16,
+        'axes.titlesize': 18,
+        'axes.labelsize': 16,
+        'xtick.labelsize': 14,
+        'ytick.labelsize': 14,
+        'legend.fontsize': 14
+    })
+    
     fig = plt.figure(figsize=(18, 10))
-    plt.subplots_adjust(hspace=0.3, wspace=0.3)
-    fig.suptitle(f"Step-by-Step Processing of ID: {boat_id}", fontsize=16)
+    plt.subplots_adjust(hspace=0.4, wspace=0.3)
+    fig.suptitle(f"Step-by-Step Processing of ID: {boat_id}", fontsize=22, fontweight='bold')
 
     # --- STEP 1: RAW 3D MESH ---
     ax1 = fig.add_subplot(2, 3, 1, projection='3d')
@@ -96,12 +105,14 @@ def generate_debug_plot(boat_id, mesh_vertices, points_2d, hull_points, aligned_
     ax4.grid(True)
     ax4.set_xlim(-0.6, 0.6)
     ax4.set_ylim(-0.6, 0.6)
+    # ax4.legend(loc='lower right')
 
     # --- STEP 5: POLAR PROFILE ---
     ax5 = fig.add_subplot(2, 3, 5, projection='polar')
     target_angles = np.linspace(-np.pi, np.pi, len(radii), endpoint=False)
     ax5.plot(target_angles, radii, 'g-', label='Radii')
     ax5.set_title("5. Polar Profile")
+    # ax5.legend(loc='lower left', bbox_to_anchor=(0.9, 1.0))
 
     # --- STEP 6: RECONSTRUCTION CHECK ---
     ax6 = fig.add_subplot(2, 3, 6)
@@ -117,6 +128,7 @@ def generate_debug_plot(boat_id, mesh_vertices, points_2d, hull_points, aligned_
     ax6.grid(True)
     ax6.set_xlim(-0.6, 0.6)
     ax6.set_ylim(-0.6, 0.6)
+    # ax6.legend(loc='lower right')
 
     output_file = os.path.join(output_dir, f"debug_{boat_id}.png")
     plt.savefig(output_file)
@@ -212,7 +224,9 @@ def main():
     ax.fill(x_real, y_real, alpha=0.3, fc='blue')
     ax.plot(x_real, y_real, color='blue', lw=1.5)
     ax.plot(0, 0, 'go', markersize=4)
-    ax.set_title(f"ID: {boat_id}\nL={original_length:.1f}, W={original_width:.1f}", fontsize=10)
+    ax.set_title(f"ID: {boat_id}\nL={original_length:.1f}, W={original_width:.1f}", fontsize=16)
+    ax.set_xlabel("X (m)", fontsize=14)
+    ax.set_ylabel("Y (m)", fontsize=14)
     ax.set_aspect('equal')
     ax.grid(True, linestyle=':', alpha=0.6)
     
