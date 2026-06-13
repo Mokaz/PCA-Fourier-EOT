@@ -12,23 +12,17 @@ sys.path.append(PROJECT_ROOT)
 
 from global_project_paths import SIMDATA_PATH
 
-from src.dynamics.process_models import GroundTruthModel, Model_GP_CV, Model_PCA_CV, Model_PCA_Temporal, Model_PCA_Inflation
+from src.dynamics.process_models import GroundTruthModel, Model_PCA_CV, Model_PCA_Temporal, Model_PCA_Inflation
 from src.dynamics.trajectories import CircleTrajectory, WaypointTrajectory, ConstantVelocityTrajectory, DynamicWaypointTrajectory
 from src.sensors.LidarModel import LidarSimulator
 
 from tracker.EKF import EKF
 from src.tracker.IterativeEKF import IterativeEKF
-# from src.tracker.gauss_newton import GaussNewton
-# from src.tracker.levenberg_marquardt import LevenbergMarquardt
-from src.tracker.BFGS import BFGS
-# from src.tracker.SLSQP import SLSQP
-# from src.tracker.smoothing_SLSQP import SmoothingSLSQP
-# from src.tracker.UnscentedKalmanFilter import UKF
+
 from src.tracker.ImplicitIEKF import ImplicitIEKF
 from src.tracker.IPLF import IPLF
 from src.tracker.UT_IPLF import UT_IPLF
 
-from src.tracker.ImplicitSmoother import ImplicitSmoother
 from src.tracker.IPLFSmoother import IPLFSmoother
 from src.tracker.FullBatchSmoother import FullBatchSmoother
 
@@ -45,16 +39,9 @@ from src.analysis.analysis_utils import create_consistency_analysis_from_sim_res
 
 from src.utils.config_classes import Config
 
-from src.utils.GaussianProcess import GaussianProcess
-from src.sensors.LidarModelGP import LidarModelGP 
-from src.tracker.GP_IEKF import GP_IEKF
-
 def _show_gt_plot(config, ground_truth_ts, extent_cfg, lidar_cfg, traj_cfg):
     """Helper function to show the ground truth trajectory plot"""
     ts_values = list(ground_truth_ts.values)
-    # NED Frame: x is North, y is East.
-    # We want North on Y-axis (vertical) and East on X-axis (horizontal).
-    # So Plot X = state.y (East), Plot Y = state.x (North)
     
     east_vals = [state.y for state in ts_values]
     north_vals = [state.x for state in ts_values]
@@ -174,9 +161,7 @@ def _setup_tracker_and_data(config: Config):
         extent_cfg=extent_cfg
     )
 
-    if method == "bfgs":
-        tracker = BFGS(dynamic_model=filter_dyn_model, lidar_model=lidar_model, config=config)
-    elif method == "ekf":
+    if method == "ekf":
         tracker = EKF(dynamic_model=filter_dyn_model, lidar_model=lidar_model, config=config)
     elif method == "iekf":
         tracker = IterativeEKF(dynamic_model=filter_dyn_model, lidar_model=lidar_model, config=config)
@@ -350,7 +335,6 @@ def run_single_simulation(config: Config, pregenerated_data_path: str = None) ->
         with open(json_filename, "w") as f:
             json.dump(summary_data, f, indent=4)
 
-        # Config JSON
         class ConfigEncoder(json.JSONEncoder):
             def default(self, obj):
                 if isinstance(obj, np.ndarray): return obj.tolist()
@@ -368,18 +352,12 @@ def run_single_simulation(config: Config, pregenerated_data_path: str = None) ->
 
         return data_to_save
 
-    # =========================================================================
-    # 1. SAVE THE FORWARD PASS
-    # =========================================================================
     forward_suffix = "_forward" if method == "full_batch_smoother" else ""
     data_to_save_forward = save_and_evaluate_results(results_ts, suffix=forward_suffix)
 
-    # =========================================================================
-    # 2. TRIGGER THE BATCH SMOOTHER & SAVE SMOOTHED RESULTS
-    # =========================================================================
     if method == "full_batch_smoother":
         smoothed_results_ts = tracker.smooth_trajectory(results_ts)
         data_to_save_smoothed = save_and_evaluate_results(smoothed_results_ts, suffix="_smoothed")
-        return data_to_save_smoothed # Returning smoothed so run_batch/main get the final product
+        return data_to_save_smoothed
 
     return data_to_save_forward
