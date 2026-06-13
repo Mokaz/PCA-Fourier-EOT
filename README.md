@@ -12,7 +12,7 @@ conda activate gp_pca_eot
 ## Main entry file
 Configure and run the simulations using the (temporary) main file:
 ```bash
-python src/main_database.py
+python src/main.py
 ```
 
 ## Visualization
